@@ -490,7 +490,6 @@ function finishByFold(room, winner) {
     }
   }, refund ? 700 : 250);
 }
-
 function showdown(room, pendingRefund = null) {
   const refund = pendingRefund || settleUncalledExcess(room);
   room.street = 'showdown'; room.phase = 'result'; room.actionIndex = -1;
