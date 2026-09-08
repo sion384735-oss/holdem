@@ -253,7 +253,10 @@ function renderSeats() {
   const bets = players.map((player, index) => {
     if (!player.roundBet) return '';
     const seat = seatPosition(index, players.length);
-    return `<div class="table-bet" data-tone="${chipTone(player.roundBet, game.bb)}" style="left:${50 + (seat.left - 50) * .64}%;top:${50 + (seat.top - 50) * .64}%"><span class="chip-stack">${pokerChipHTML()}</span><strong>${formatChips(player.roundBet)} / ${formatCompactBB(player.roundBet)}</strong></div>`;
+    const verticalSeat = Math.abs(seat.left - 50) < 1;
+    const betLeft = 50 + (seat.left - 50) * .64 + (verticalSeat ? (seat.top > 50 ? 12 : -12) : 0);
+    const betTop = 50 + (seat.top - 50) * .64;
+    return `<div class="table-bet" data-tone="${chipTone(player.roundBet, game.bb)}" style="left:${betLeft}%;top:${betTop}%"><span class="chip-stack">${pokerChipHTML()}</span><strong>${formatChips(player.roundBet)} / ${formatCompactBB(player.roundBet)}</strong></div>`;
   }).join('');
   $('#seats').innerHTML = seats + bets;
   const dealerIndex = players.findIndex(player => player.id === game.dealerId);
