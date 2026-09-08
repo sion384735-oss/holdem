@@ -93,6 +93,18 @@
               <div><dt>블라인드 업</dt><dd id="info-blind-up">—</dd></div>
               <div><dt>설정 상태</dt><dd id="info-lock">게임 전</dd></div>
             </dl>
+            <form id="room-settings-form" class="in-room-settings hidden">
+              <b>방장 설정</b>
+              <div class="room-setting-grid">
+                <label>게임 방식<select id="room-game-mode"><option value="cash">캐시게임</option><option value="tournament">토너먼트</option></select></label>
+                <label>시작 칩<input id="room-starting-chips" type="number" min="1000" max="1000000" step="1000"></label>
+                <label>최대 인원<select id="room-max-players"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
+                <label id="room-bot-field" class="hidden">COM 수<input id="room-bot-count" type="number" min="1" max="9"></label>
+                <label id="room-blind-field" class="wide hidden">블라인드업<select id="room-blind-up"><option value="1">1분</option><option value="3">3분</option><option value="5">5분</option><option value="10">10분</option><option value="15">15분</option><option value="20">20분</option><option value="30">30분</option></select></label>
+              </div>
+              <button type="submit">설정 저장</button>
+              <small>게임 시작 후에는 종료될 때까지 수정할 수 없습니다.</small>
+            </form>
             <div class="fair"><b>✓ 서버 권위형 게임</b><p>방 설정과 카드, 액션, 결과를 서버에서 검증합니다. 게임 시작 후 설정은 종료 때까지 잠깁니다.</p></div>
           </div>
           <div id="tournament-card" class="tournament-card hidden">
@@ -106,6 +118,7 @@
   <div id="entry-modal" class="join-modal">
     <div class="join-card entry-card">
       <section id="entry-home">
+        <button id="entry-close" class="entry-close hidden" type="button">현재 게임으로 돌아가기 ✕</button>
         <span class="join-logo">♠</span>
         <p>FELT CLUB · PLAY</p>
         <h2>어떤 게임을 할까요?</h2>

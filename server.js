@@ -163,12 +163,11 @@ function startHand(room) {
   addLog(room, `HAND #${room.handNumber} · ${room.mode === 'cash' ? '캐시게임' : `토너먼트 LEVEL ${room.level + 1}`}`, 'system');
   addLog(room, `${room.players[room.sbIndex].name} SB ${sbPaid}`);
   addLog(room, `${room.players[room.bbIndex].name} BB ${bbPaid}`);
-  broadcast(room);
+  continueGame(room);
   setTimeout(() => {
     broadcastEvent(room, { event: 'chipsOut', playerId: room.players[room.sbIndex]?.id, amount: sbPaid });
     broadcastEvent(room, { event: 'chipsOut', playerId: room.players[room.bbIndex]?.id, amount: bbPaid });
   }, 100);
-  continueGame(room);
 }
 
 function roundComplete(room) {
