@@ -11,6 +11,9 @@ let reconnectTimer = null;
 let reconnectPayload = null;
 let autoStartOnCreate = false;
 let lastEventSeq = 0;
+let lastBoardCount = 0;
+let lastBoardHand = null;
+let selectedReviewHandNumber = null;
 let inviteBase = location.origin && location.origin !== 'null' ? location.origin : 'http://127.0.0.1:5050';
 const playerId = sessionStorage.getItem('felt-player-id') || (crypto.randomUUID ? crypto.randomUUID() : `player-${Date.now()}-${Math.random()}`);
 sessionStorage.setItem('felt-player-id', playerId);
@@ -19,6 +22,7 @@ function rankLabel(rank) { return RANK_LABEL[rank] || String(rank); }
 function formatChips(value) { return Math.max(0, Math.floor(value || 0)).toLocaleString('ko-KR'); }
 function formatClock(ms) { const seconds = Math.max(0, Math.ceil(ms / 1000)); return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`; }
 function formatBB(value) { const bb = snapshot?.game.bb || 200; const amount = (value || 0) / bb; return `${Number.isInteger(amount) ? amount : amount.toFixed(1)} BB`; }
+function formatCompactBB(value) { return formatBB(value).replace(' ', ''); }
 function initials(name) { return String(name || 'P').split(/\s+/).map(word => word[0]).join('').slice(0, 2).toUpperCase(); }
 function escapeHTML(value) { return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]); }
 function send(payload) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload)); }
@@ -66,7 +70,12 @@ function connectWith(payload, options = {}) {
       render();
     } else if (message.type === 'event' && message.seq > lastEventSeq) {
       lastEventSeq = message.seq;
-      setTimeout(() => message.event === 'chipsIn' ? animateWinnings(message.playerId, message.amount) : animateChipsOut(message.playerId, message.amount), 30);
+      setTimeout(() => {
+        if (message.event === 'chipsOut') animateChipsOut(message.playerId, message.amount);
+        else if (message.event === 'chipsReturn') animateWinnings(message.playerId, message.amount, { label: message.label || 'UNCALLED RETURN', refund: true });
+        else if (message.event === 'potAward' || message.event === 'chipsIn') animateWinnings(message.playerId, message.amount, { label: message.label || 'MAIN POT' });
+        else if (message.event === 'actionFlash') animateActionFlash(message.playerId, message.label);
+      }, 30);
     } else if (message.type === 'error') {
       setEntryBusy(false);
       toast(message.message);
@@ -90,6 +99,9 @@ function disconnectTable() {
   socket = null;
   snapshot = null;
   lastEventSeq = 0;
+  lastBoardCount = 0;
+  lastBoardHand = null;
+  selectedReviewHandNumber = null;
   history.replaceState(null, '', location.pathname);
   renderEmptyTable();
 }
@@ -104,10 +116,16 @@ function getSettings() {
   };
 }
 
-function updateBotOptions() {
+function updateBotOptions(reset = false) {
   const maximum = Math.max(1, Number($('#entry-max-players').value) - 1);
-  const selected = Math.min(maximum, Number($('#entry-bot-count').value) || maximum);
-  $('#entry-bot-count').innerHTML = Array.from({ length: maximum }, (_, index) => `<option${index + 1 === selected ? ' selected' : ''}>${index + 1}</option>`).join('');
+  const minimum = entryMode === 'com' ? 1 : 0;
+  const fallback = entryMode === 'com' ? maximum : 0;
+  const current = Number($('#entry-bot-count').value);
+  const selected = reset || !Number.isFinite(current) ? fallback : Math.min(maximum, Math.max(minimum, current));
+  $('#entry-bot-count').innerHTML = Array.from({ length: maximum - minimum + 1 }, (_, index) => {
+    const value = index + minimum;
+    return `<option value="${value}"${value === selected ? ' selected' : ''}>${value === 0 ? '없음' : value}</option>`;
+  }).join('');
 }
 
 function updateEntryFields() {
@@ -116,7 +134,7 @@ function updateEntryFields() {
   $('#realtime-tabs').classList.toggle('hidden', !realtime);
   $('#host-settings').classList.toggle('hidden', joining);
   $('#join-fields').classList.toggle('hidden', !joining);
-  $('#bot-count-field').classList.toggle('hidden', entryMode !== 'com');
+  $('#bot-count-field').classList.toggle('hidden', joining);
   $('#blind-up-field').classList.toggle('hidden', joining || $('#entry-game-mode').value !== 'tournament');
   $$('[data-realtime]').forEach(button => button.classList.toggle('active', entryMode === `realtime-${button.dataset.realtime}`));
   if (entryMode === 'com') {
@@ -136,6 +154,13 @@ function updateEntryFields() {
 
 function updateRoomSettingFields() {
   $('#room-blind-field').classList.toggle('hidden', $('#room-game-mode').value !== 'tournament');
+  if (!snapshot) return;
+  const minimum = snapshot.room.playType === 'com' ? 1 : 0;
+  const humanCount = snapshot.game.players.filter(player => player.connected && !player.isBot).length;
+  const maximum = Math.max(minimum, Number($('#room-max-players').value) - humanCount);
+  $('#room-bot-count').min = minimum;
+  $('#room-bot-count').max = maximum;
+  if (Number($('#room-bot-count').value) > maximum) $('#room-bot-count').value = maximum;
 }
 
 function showEntry(mode = 'home') {
@@ -145,7 +170,10 @@ function showEntry(mode = 'home') {
   $('#entry-form').classList.toggle('hidden', entryMode === 'home');
   $('#entry-close').classList.toggle('hidden', !snapshot || entryMode !== 'home');
   setEntryBusy(false);
-  if (entryMode !== 'home') updateEntryFields();
+  if (entryMode !== 'home') {
+    updateBotOptions(true);
+    updateEntryFields();
+  }
 }
 
 function viewPlayers() {
@@ -159,10 +187,11 @@ function seatPosition(index, total, radiusX = 40, radiusY = 42) {
   const angle = (90 + index * (360 / Math.max(2, total))) * Math.PI / 180;
   return { left: 50 + radiusX * Math.cos(angle), top: 50 + radiusY * Math.sin(angle) };
 }
-function cardHTML(card, back = false) {
-  if (back || !card) return '<span class="card back">♠</span>';
+function cardHTML(card, back = false, extraClass = '') {
+  const className = extraClass ? ` ${extraClass}` : '';
+  if (back || !card) return `<span class="card back${className}">♠</span>`;
   const red = card.suit === '♥' || card.suit === '♦' ? ' red' : '';
-  return `<span class="card${red}"><b>${rankLabel(card.rank)}</b><span class="suit">${card.suit}</span></span>`;
+  return `<span class="card${red}${className}"><b>${rankLabel(card.rank)}</b><span class="suit">${card.suit}</span></span>`;
 }
 
 function chipTone(amount, bb = snapshot?.game?.bb || 200) {
@@ -178,7 +207,17 @@ function pokerChipHTML(label = '♠') {
   return `<span class="poker-chip"><span class="poker-chip-core">${label}</span></span>`;
 }
 
-function animateChip(id, amount, incoming) {
+function showPotMotionLabel(label, amount, refund = false) {
+  const stage = $('.table-stage');
+  if (!stage) return;
+  const banner = document.createElement('div');
+  banner.className = `pot-motion-label${refund ? ' refund' : ''}`;
+  banner.innerHTML = `<small>${escapeHTML(label)}</small><strong>${formatChips(amount)} / ${formatCompactBB(amount)}</strong>`;
+  stage.appendChild(banner);
+  setTimeout(() => banner.remove(), 1450);
+}
+
+function animateChip(id, amount, incoming, options = {}) {
   if (!snapshot) return;
   const index = viewIndexFor(id);
   const seat = $(`.seat-${index}`);
@@ -188,9 +227,9 @@ function animateChip(id, amount, incoming) {
   const centerY = stage.clientHeight * .48;
   [0, 1, 2].forEach(item => {
     const chip = document.createElement('div');
-    chip.className = `chip-flight${incoming ? ' chip-win' : ''}`;
-    chip.dataset.tone = incoming ? 'gold' : chipTone(amount);
-    chip.innerHTML = `${pokerChipHTML()}${item === 1 ? `<strong class="chip-flight-value">${incoming ? '+' : '−'}${formatChips(amount)}</strong>` : ''}`;
+    chip.className = `chip-flight${incoming ? ' chip-win' : ''}${options.refund ? ' chip-refund' : ''}`;
+    chip.dataset.tone = options.refund ? 'ivory' : incoming ? 'gold' : chipTone(amount);
+    chip.innerHTML = `${pokerChipHTML()}${item === 1 ? `<strong class="chip-flight-value">${incoming ? '+' : '−'}${formatChips(amount)} / ${formatCompactBB(amount)}</strong>` : ''}`;
     chip.style.left = `${incoming ? centerX : seat.offsetLeft}px`;
     chip.style.top = `${incoming ? centerY : seat.offsetTop}px`;
     chip.style.setProperty('--dx', `${incoming ? seat.offsetLeft - centerX : centerX - seat.offsetLeft}px`);
@@ -201,11 +240,41 @@ function animateChip(id, amount, incoming) {
   });
 }
 function animateChipsOut(id, amount) { animateChip(id, amount, false); }
-function animateWinnings(id, amount) { animateChip(id, amount, true); }
+function animateWinnings(id, amount, options = {}) {
+  if (options.label) showPotMotionLabel(options.label, amount, options.refund);
+  animateChip(id, amount, true, options);
+}
+
+function animateActionFlash(id, label) {
+  const index = viewIndexFor(id);
+  const seat = $(`.seat-${index}`);
+  const anchor = seat?.querySelector('.hole-cards') || seat?.querySelector('.player-box');
+  if (!anchor) return;
+  anchor.querySelector('.action-flash')?.remove();
+  const flash = document.createElement('span');
+  flash.className = 'action-flash';
+  flash.textContent = label || 'CHECK';
+  anchor.appendChild(flash);
+  setTimeout(() => flash.remove(), 1450);
+}
+
+function updateCardCountdown() {
+  const timer = $('.turn-countdown');
+  if (!timer || snapshot?.game.phase !== 'playing') return;
+  const seconds = Math.max(0, Math.ceil((snapshot.game.turnEndsAt - Date.now()) / 1000));
+  timer.textContent = seconds;
+  timer.classList.toggle('urgent', seconds <= 10);
+  timer.style.setProperty('--turn-progress', `${Math.min(360, seconds * 6)}deg`);
+}
 
 function renderBoard() {
   const board = snapshot?.game.board || [];
-  $('#board').innerHTML = Array.from({ length: 5 }, (_, index) => board[index] ? cardHTML(board[index]) : cardHTML(null, true)).join('');
+  const handNumber = snapshot?.game.handNumber;
+  if (lastBoardHand !== handNumber) { lastBoardHand = handNumber; lastBoardCount = 0; }
+  $('#board').innerHTML = Array.from({ length: 5 }, (_, index) => board[index]
+    ? cardHTML(board[index], false, index >= lastBoardCount ? 'deal-card' : '')
+    : cardHTML(null, true)).join('');
+  lastBoardCount = board.length;
 }
 
 function renderSeats() {
@@ -216,16 +285,24 @@ function renderSeats() {
     const isHero = player.id === snapshot.you;
     const cards = player.inHand ? (player.hand ? player.hand.map(card => cardHTML(card)).join('') : `${cardHTML(null, true)}${cardHTML(null, true)}`) : '';
     const position = seatPosition(index, players.length);
-    const classes = [player.folded ? 'folded' : '', !player.connected ? 'disconnected' : '', game.turnPlayerId === player.id ? 'active' : '', position.top < 50 ? 'top-seat' : '', winnerIds.has(player.id) ? 'winner' : ''].filter(Boolean).join(' ');
+    const sideCards = Math.abs(position.left - 50) > 32 && Math.abs(position.top - 50) < 20
+      ? (position.left < 50 ? 'side-cards-right' : 'side-cards-left')
+      : '';
+    const classes = [player.folded ? 'folded' : '', player.allIn ? 'all-in' : '', !player.connected ? 'disconnected' : '', game.turnPlayerId === player.id ? 'active' : '', position.top < 50 ? 'top-seat' : '', sideCards, winnerIds.has(player.id) ? 'winner' : ''].filter(Boolean).join(' ');
     const blind = game.sbId === player.id ? 'SB' : game.bbId === player.id ? 'BB' : '';
-    const status = player.stack <= 0 ? 'TABLE OUT' : !player.connected ? 'DISCONNECTED' : `${formatChips(player.stack)} <i>/</i> ${formatBB(player.stack)}`;
+    const status = !player.connected ? 'DISCONNECTED' : player.stack <= 0 && !player.inHand ? 'TABLE OUT' : `${formatChips(player.stack)} <i>/</i> ${formatBB(player.stack)}`;
     const name = escapeHTML(player.name);
-    return `<div class="seat seat-${index} ${classes}" style="left:${position.left}%;top:${position.top}%"><div class="player-box">${cards ? `<div class="hole-cards">${cards}</div>` : ''}<span class="avatar" style="background:${COLORS[index % COLORS.length]};color:${isHero ? '#18251f' : '#fff'}">${initials(name)}</span><div class="player-info"><b>${name}${player.isBot ? '<span class="badge">COM</span>' : isHero ? '<span class="badge">YOU</span>' : ''}</b><small>${status}</small></div>${blind ? `<span class="blind-badge">${blind}</span>` : ''}</div></div>`;
+    const turnSeconds = Math.max(0, Math.ceil((game.turnEndsAt - Date.now()) / 1000));
+    const countdown = game.phase === 'playing' && game.turnPlayerId === player.id ? `<time class="turn-countdown${turnSeconds <= 10 ? ' urgent' : ''}" style="--turn-progress:${Math.min(360, turnSeconds * 6)}deg">${turnSeconds}</time>` : '';
+    return `<div class="seat seat-${index} ${classes}" style="left:${position.left}%;top:${position.top}%"><div class="player-box">${cards ? `<div class="hole-cards">${player.allIn ? '<span class="all-in-badge">ALL IN</span>' : ''}${cards}${countdown}</div>` : ''}<span class="avatar" style="background:${COLORS[index % COLORS.length]};color:${isHero ? '#18251f' : '#fff'}">${initials(name)}</span><div class="player-info"><b>${name}${player.isBot ? '<span class="badge">COM</span>' : isHero ? '<span class="badge">YOU</span>' : ''}</b><small>${status}</small></div>${blind ? `<span class="blind-badge">${blind}</span>` : ''}</div></div>`;
   }).join('');
   const bets = players.map((player, index) => {
     if (!player.roundBet) return '';
     const seat = seatPosition(index, players.length);
-    return `<div class="table-bet" data-tone="${chipTone(player.roundBet, game.bb)}" style="left:${50 + (seat.left - 50) * .64}%;top:${50 + (seat.top - 50) * .64}%"><span class="chip-stack">${pokerChipHTML()}</span><strong>${formatChips(player.roundBet)}</strong></div>`;
+    const verticalSeat = Math.abs(seat.left - 50) < 1;
+    const betLeft = 50 + (seat.left - 50) * .64 + (verticalSeat ? (seat.top > 50 ? 12 : -12) : 0);
+    const betTop = 50 + (seat.top - 50) * .64;
+    return `<div class="table-bet" data-tone="${chipTone(player.roundBet, game.bb)}" style="left:${betLeft}%;top:${betTop}%"><span class="chip-stack">${pokerChipHTML()}</span><strong>${formatChips(player.roundBet)} / ${formatCompactBB(player.roundBet)}</strong></div>`;
   }).join('');
   $('#seats').innerHTML = seats + bets;
   const dealerIndex = players.findIndex(player => player.id === game.dealerId);
@@ -267,7 +344,7 @@ function updateRaiseControls() {
 }
 
 function renderActions() {
-  const game = snapshot.game;
+  const { game, room } = snapshot;
   const isHeroTurn = game.phase === 'playing' && game.turnPlayerId === snapshot.you;
   const needed = callAmount();
   ['#fold-btn', '#call-btn', '#raise-btn', '#raise-slider', '#raise-bb'].forEach(selector => { $(selector).disabled = !isHeroTurn; });
@@ -285,14 +362,20 @@ function renderActions() {
     $('#turn-detail').textContent = game.result?.winners?.[0] ? `${game.result.winners[0].hand} · +${formatChips(game.result.winners[0].amount)}` : '결과 계산 중';
   } else if (game.phase === 'shuffling') {
     $('#turn-title').textContent = '덱을 섞는 중…'; $('#turn-detail').textContent = '새 핸드가 곧 시작됩니다';
+  } else if (game.phase === 'runout') {
+    const nextStreet = game.board.length < 3 ? 'FLOP' : game.board.length < 4 ? 'TURN' : game.board.length < 5 ? 'RIVER' : 'SHOWDOWN';
+    $('#turn-title').textContent = 'ALL-IN SHOWDOWN';
+    $('#turn-detail').textContent = `${nextStreet} 공개 대기 중…`;
   } else if (game.phase === 'lobby') {
     $('#turn-title').textContent = '방장이 게임을 시작하기 전입니다'; $('#turn-detail').textContent = '방 설정과 참가자를 확인해 주세요';
   } else if (game.phase === 'gameover') {
-    $('#turn-title').textContent = '게임이 종료되었습니다'; $('#turn-detail').textContent = '설정을 바꿀 수 있으며 방장이 다시 시작할 수 있습니다';
+    const busted = room.playType === 'com' && hero()?.stack <= 0;
+    $('#turn-title').textContent = busted ? '칩을 모두 잃었습니다' : '게임이 종료되었습니다';
+    $('#turn-detail').textContent = room.playType === 'com' ? '다시하기를 누르면 시작 칩으로 재도전합니다' : '설정을 바꿀 수 있으며 방장이 다시 시작할 수 있습니다';
   } else {
     $('#turn-title').textContent = '플레이어를 기다리는 중'; $('#turn-detail').textContent = '게임 종료 또는 재접속을 기다리고 있습니다';
   }
-  $('#action-timer').textContent = game.phase === 'playing' ? formatClock(game.turnEndsAt - Date.now()) : (game.phase === 'result' || game.phase === 'shuffling') ? formatClock(game.phaseEndsAt - Date.now()) : '--:--';
+  $('#action-timer').textContent = game.phase === 'playing' ? formatClock(game.turnEndsAt - Date.now()) : (game.phase === 'result' || game.phase === 'shuffling' || game.phase === 'runout') ? formatClock(game.phaseEndsAt - Date.now()) : '--:--';
   if (game.phase !== 'playing') setRaiseTarget(game.bb * 2, false);
   updateRaiseControls();
 }
@@ -300,16 +383,19 @@ function renderActions() {
 function renderOverlay() {
   const { game, room } = snapshot;
   const isHost = room.hostId === snapshot.you;
+  const busted = room.playType === 'com' && hero()?.stack <= 0;
   const connected = game.players.filter(player => player.connected).length;
-  const visible = game.phase !== 'playing';
+  const visible = ['lobby', 'waiting', 'shuffling', 'result', 'gameover'].includes(game.phase);
   $('#table-overlay').classList.toggle('hidden', !visible);
   $('#table-overlay').classList.toggle('result-mode', game.phase === 'result' || game.phase === 'gameover');
   $('.shuffle-deck').classList.toggle('hidden', game.phase !== 'shuffling');
   $('#result-badge').classList.toggle('hidden', game.phase !== 'result' && game.phase !== 'gameover');
+  $('#result-badge').textContent = busted ? 'OUT' : game.phase === 'gameover' ? 'END' : 'WIN';
   const startVisible = isHost && !room.started && (game.phase === 'lobby' || game.phase === 'gameover');
   $('#start-game-btn').classList.toggle('hidden', !startVisible);
+  $('#start-game-btn').classList.toggle('replay', room.playType === 'com' && game.phase === 'gameover');
   $('#start-game-btn').disabled = connected < 2;
-  $('#start-game-btn').textContent = game.phase === 'gameover' ? '같은 설정으로 다시 시작' : '게임 시작';
+  $('#start-game-btn').textContent = game.phase === 'gameover' ? (room.playType === 'com' ? '↻ 다시하기' : '같은 설정으로 다시 시작') : '게임 시작';
   if (game.phase === 'lobby') {
     $('#overlay-title').textContent = room.playType === 'com' ? 'COM TABLE READY' : `ROOM ${room.code} · 대기실`;
     $('#overlay-detail').textContent = isHost ? `${connected} / ${room.maxPlayers}명 · 방장이 시작하면 설정이 잠깁니다` : `${connected} / ${room.maxPlayers}명 · 방장의 시작을 기다리는 중`;
@@ -325,7 +411,9 @@ function renderOverlay() {
     $('#overlay-detail').textContent = winner ? `${winner.hand} · +${formatChips(winner.amount)}` : '결과 계산 중';
   } else if (game.phase === 'gameover') {
     $('#overlay-title').textContent = game.result?.winners?.[0] ? `${game.result.winners[0].name} · TOURNAMENT CHAMPION` : 'GAME OVER';
-    $('#overlay-detail').textContent = '게임이 끝나 방 설정 잠금이 해제되었습니다';
+    $('#overlay-detail').textContent = room.playType === 'com'
+      ? (busted ? 'ALL-IN 패배 · 시작 칩으로 다시 도전하세요' : '같은 설정으로 다시 플레이할 수 있습니다')
+      : '게임이 끝나 방 설정 잠금이 해제되었습니다';
   }
 }
 
@@ -334,11 +422,63 @@ function renderLogs() {
   $('#hand-log').scrollTop = $('#hand-log').scrollHeight;
 }
 
+function renderHandReview() {
+  const target = $('#hand-review');
+  const reviews = snapshot?.game.handHistory?.length
+    ? snapshot.game.handHistory
+    : snapshot?.game.lastHandReview ? [snapshot.game.lastHandReview] : [];
+  if (!reviews.length) {
+    selectedReviewHandNumber = null;
+    target.innerHTML = '<div class="empty-panel">완료된 핸드가 아직 없습니다.<br>쇼다운에서 공개된 카드만 히스토리에 남습니다.</div>';
+    return;
+  }
+  const newestFirst = [...reviews].reverse();
+  let review = reviews.find(item => item.handNumber === selectedReviewHandNumber);
+  if (!review) {
+    review = newestFirst[0];
+    selectedReviewHandNumber = review.handNumber;
+  }
+  const handPicker = `<nav class="review-hand-picker" aria-label="완료된 핸드 선택">${newestFirst.map(item => {
+    const winnerNames = item.winners?.map(winner => winner.name).join(' · ') || '결과 없음';
+    return `<button type="button" data-review-hand="${item.handNumber}" class="${item.handNumber === review.handNumber ? 'active' : ''}"><b>#${item.handNumber}</b><small>${escapeHTML(winnerNames)}</small></button>`;
+  }).join('')}</nav>`;
+  const winners = new Map(review.winners.map(winner => [winner.id, winner]));
+  const players = [...review.players].sort((a, b) => (a.id === snapshot.you ? -1 : b.id === snapshot.you ? 1 : 0));
+  const board = review.board.length
+    ? review.board.map(card => cardHTML(card, false, 'review-card')).join('')
+    : '<span class="review-no-board">보드 오픈 전 종료</span>';
+  const potResults = (review.pots || []).map(pot => {
+    const awards = pot.winners?.map(winner => `${escapeHTML(winner.name)} +${formatChips(winner.amount)}`).join(' · ') || '승자 없음';
+    return `<div class="review-pot-result"><span>${escapeHTML(pot.label)} · ${formatChips(pot.amount)}</span><strong>${awards}</strong></div>`;
+  }).join('');
+  const playerRows = players.map(player => {
+    const isHero = player.id === snapshot.you;
+    const winner = winners.get(player.id);
+    const cards = player.revealed && player.hand?.length
+      ? player.hand.map(card => cardHTML(card, false, 'review-card')).join('')
+      : `<span class="review-hidden-hand">${player.folded ? 'FOLDED · HIDDEN' : 'NOT SHOWN'}</span>`;
+    const classes = [isHero ? 'hero' : '', winner ? 'winner' : '', player.folded ? 'folded' : '', !player.revealed ? 'hidden-hand' : ''].filter(Boolean).join(' ');
+    const role = isHero ? 'MY HAND' : player.isBot ? 'COM' : 'PLAYER';
+    const resultLabel = winner ? winner.hand : player.handName;
+    return `<article class="review-player ${classes}">
+      <div class="review-player-head"><span class="review-role">${role}</span>${winner ? `<strong>+${formatChips(winner.amount)}</strong>` : `<small>${formatChips(player.totalBet)} BET</small>`}</div>
+      <div class="review-player-body"><span class="avatar">${escapeHTML(initials(player.name))}</span><div class="review-player-name"><b>${escapeHTML(player.name)}</b><small>${escapeHTML(resultLabel)}</small></div><div class="review-cards">${cards}</div></div>
+    </article>`;
+  }).join('');
+  const history = review.logs.map(log => `<div class="review-log ${escapeHTML(log.kind || '')}">${escapeHTML(log.text)}</div>`).join('');
+  target.innerHTML = `${handPicker}<section class="review-summary">
+    <div class="review-title"><div><small>HAND HISTORY</small><strong>#${review.handNumber}</strong></div><span>${review.finish === 'showdown' ? 'SHOWDOWN' : 'FOLD WIN'}</span></div>
+    <div class="review-pot"><small>FINAL POT</small><strong>${formatChips(review.pot)}</strong></div>
+    <div class="review-board"><small>BOARD</small><div>${board}</div></div>
+    ${potResults ? `<div class="review-pot-results">${potResults}</div>` : ''}
+  </section>${playerRows}<details class="review-history"><summary>전체 액션 히스토리 <span>${review.logs.length}</span></summary><div>${history}</div></details>`;
+}
+
 function render() {
   if (!snapshot) return renderEmptyTable();
   const { game, room } = snapshot;
   const isHost = room.hostId === snapshot.you;
-  renderBoard(); renderSeats(); renderActions(); renderOverlay(); renderLogs();
+  renderBoard(); renderSeats(); renderActions(); renderOverlay(); renderLogs(); renderHandReview();
   const playType = room.playType === 'com' ? 'VS COM' : '실시간 배틀';
   const gameMode = room.mode === 'cash' ? '캐시게임' : '토너먼트';
   const connected = game.players.filter(player => player.connected).length;
@@ -362,12 +502,16 @@ function render() {
   $('#mini-name').textContent = hero()?.name || 'PLAYER';
   $('#mini-avatar').textContent = initials(hero()?.name);
   $('#mini-mode').textContent = `${playType} · ${isHost ? '방장' : '참가자'}`;
-  $('#info-play-type').textContent = playType;
-  $('#info-game-mode').textContent = gameMode;
-  $('#info-starting-chips').textContent = `${formatChips(room.startingChips)}칩`;
-  $('#info-table-size').textContent = `${connected} / ${room.maxPlayers}명`;
-  $('#info-blind-up').textContent = room.mode === 'tournament' ? `${room.blindUpMinutes}분마다` : '없음 · 100 / 200 고정';
-  $('#info-lock').textContent = room.settingsLocked ? '게임 종료까지 잠김' : '게임 전 · 변경 가능';
+  const gto = room.gto || { policyCount: 0, roomDecisions: { solver: 0, equity: 0 } };
+  const solverDecisions = gto.roomDecisions?.solver || 0;
+  const equityDecisions = gto.roomDecisions?.equity || 0;
+  const totalBotDecisions = solverDecisions + equityDecisions;
+  $('#gto-card').classList.toggle('hidden', room.botCount < 1);
+  $('#gto-status').textContent = gto.policyCount ? `HYBRID GTO · ${gto.policyCount} SOLVER` : 'EQUITY GTO ENGINE';
+  $('#gto-hits').textContent = `${formatChips(solverDecisions)} EXACT / ${formatChips(totalBotDecisions)}`;
+  $('#gto-detail').textContent = gto.policyCount
+    ? `TexasSolver 정확 매칭 ${formatChips(solverDecisions)}회 · 나머지 ${formatChips(equityDecisions)}회는 승률·팟 오즈·SPR 혼합 전략`
+    : `Monte Carlo 승률·팟 오즈·SPR 기반 혼합 전략 · ${formatChips(equityDecisions)}회 판단`;
   const canEditSettings = isHost && !room.settingsLocked;
   $('#room-settings-form').classList.toggle('hidden', !canEditSettings);
   if (canEditSettings && !$('#room-settings-form').matches(':focus-within')) {
@@ -377,8 +521,7 @@ function render() {
     $('#room-blind-up').value = room.blindUpMinutes;
     $('#room-bot-count').value = room.botCount;
   }
-  $('#room-bot-field').classList.toggle('hidden', room.playType !== 'com');
-  $('#room-bot-count').max = Math.max(1, Number($('#room-max-players').value) - 1);
+  $('#room-bot-field').classList.remove('hidden');
   updateRoomSettingFields();
   $('#tournament-card').classList.toggle('hidden', room.mode !== 'tournament');
   $('#level-label').textContent = `LEVEL ${game.level + 1}`;
@@ -413,8 +556,11 @@ function renderEmptyTable() {
   $('#turn-detail').textContent = 'VS COM 또는 실시간 배틀';
   $('#action-timer').textContent = '--:--';
   $('#end-game-btn').classList.add('hidden');
+  $('#gto-card').classList.add('hidden');
   $('#lock-label').textContent = '설정 대기';
   $('#hand-log').innerHTML = '<div class="empty-panel">게임에 들어가면 기록이 표시됩니다.</div>';
+  selectedReviewHandNumber = null;
+  $('#hand-review').innerHTML = '<div class="empty-panel">완료된 핸드가 아직 없습니다.<br>쇼다운에서 공개된 카드만 히스토리에 남습니다.</div>';
   ['#fold-btn', '#call-btn', '#raise-btn', '#raise-slider', '#raise-bb'].forEach(selector => { $(selector).disabled = true; });
   $$('.presets button').forEach(button => { button.disabled = true; });
   $$('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === 'home'));
@@ -442,10 +588,10 @@ $$('[data-realtime]').forEach(button => button.addEventListener('click', () => {
 $('#entry-back').addEventListener('click', () => showEntry('home'));
 $('#entry-close').addEventListener('click', () => $('#entry-modal').classList.add('hidden'));
 $('#entry-game-mode').addEventListener('change', updateEntryFields);
-$('#entry-max-players').addEventListener('change', updateBotOptions);
+$('#entry-max-players').addEventListener('change', () => updateBotOptions());
 $('#logo-home').addEventListener('click', () => showEntry('home'));
 $('#room-game-mode').addEventListener('change', updateRoomSettingFields);
-$('#room-max-players').addEventListener('change', () => { $('#room-bot-count').max = Math.max(1, Number($('#room-max-players').value) - 1); });
+$('#room-max-players').addEventListener('change', updateRoomSettingFields);
 $('#room-settings-form').addEventListener('submit', event => {
   event.preventDefault();
   send({
@@ -460,11 +606,17 @@ $('#room-settings-form').addEventListener('submit', event => {
   });
   toast('방 설정을 저장했습니다.');
 });
+$('#hand-review').addEventListener('click', event => {
+  const button = event.target.closest('[data-review-hand]');
+  if (!button || !snapshot) return;
+  selectedReviewHandNumber = Number(button.dataset.reviewHand);
+  renderHandReview();
+});
 $$('[data-nav]').forEach(button => button.addEventListener('click', () => {
-  if (button.dataset.nav === 'settings') {
+  if (button.dataset.nav === 'review') {
     if (!snapshot) return toast('먼저 게임 방에 들어가 주세요.');
     $('#entry-modal').classList.add('hidden');
-    $('.tabs [data-panel="info-panel"]').click();
+    $('.tabs [data-panel="review-panel"]').click();
     return;
   }
   showEntry(button.dataset.nav);
@@ -492,8 +644,9 @@ setInterval(() => {
   if (!snapshot) return;
   const { game, room } = snapshot;
   if (game.phase === 'playing') $('#action-timer').textContent = formatClock(game.turnEndsAt - Date.now());
-  else if (game.phase === 'result' || game.phase === 'shuffling') { renderActions(); renderOverlay(); }
+  else if (game.phase === 'result' || game.phase === 'shuffling' || game.phase === 'runout') { renderActions(); renderOverlay(); }
   if (room.mode === 'tournament' && room.started) $('#level-timer').textContent = formatClock(game.levelEndsAt - Date.now());
+  updateCardCountdown();
 }, 250);
 
 const queryRoom = new URLSearchParams(location.search).get('room');

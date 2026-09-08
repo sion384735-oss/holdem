@@ -14,7 +14,7 @@
         <button class="nav-item active" data-nav="home"><span>⌂</span>플레이 홈</button>
         <button class="nav-item" data-nav="com"><span>♣</span>VS COM</button>
         <button class="nav-item" data-nav="realtime"><span>⚡</span>실시간 배틀</button>
-        <button class="nav-item" data-nav="settings"><span>◇</span>방 설정</button>
+        <button class="nav-item" data-nav="review"><span>↺</span>핸드 히스토리</button>
       </nav>
       <div class="online"><i id="socket-dot"></i><span>ONLINE TABLE</span><b id="online-count">0</b></div>
       <div class="me-mini"><span id="mini-avatar" class="avatar hero-avatar">P</span><div><b id="mini-name">PLAYER</b><small id="mini-mode">메뉴에서 게임 선택</small></div></div>
@@ -82,30 +82,27 @@
         </div>
 
         <aside class="right-panel">
-          <div class="tabs"><button class="active" data-panel="log-panel">HAND LOG</button><button data-panel="info-panel">TABLE INFO</button></div>
+          <div class="tabs"><button class="active" data-panel="log-panel">HAND LOG</button><button data-panel="review-panel">HAND HISTORY</button></div>
           <div id="log-panel" class="panel-content"><div id="hand-log" class="hand-log"><div class="empty-panel">게임에 들어가면 기록이 표시됩니다.</div></div></div>
-          <div id="info-panel" class="panel-content hidden">
-            <dl>
-              <div><dt>대전 방식</dt><dd id="info-play-type">—</dd></div>
-              <div><dt>게임 방식</dt><dd id="info-game-mode">—</dd></div>
-              <div><dt>시작 칩</dt><dd id="info-starting-chips">—</dd></div>
-              <div><dt>테이블 인원</dt><dd id="info-table-size">—</dd></div>
-              <div><dt>블라인드 업</dt><dd id="info-blind-up">—</dd></div>
-              <div><dt>설정 상태</dt><dd id="info-lock">게임 전</dd></div>
-            </dl>
+          <div id="review-panel" class="panel-content hidden">
+            <div id="hand-review" class="hand-review"><div class="empty-panel">완료된 핸드가 아직 없습니다.<br>쇼다운에서 공개된 카드만 히스토리에 남습니다.</div></div>
             <form id="room-settings-form" class="in-room-settings hidden">
               <b>방장 설정</b>
               <div class="room-setting-grid">
                 <label>게임 방식<select id="room-game-mode"><option value="cash">캐시게임</option><option value="tournament">토너먼트</option></select></label>
                 <label>시작 칩<input id="room-starting-chips" type="number" min="1000" max="1000000" step="1000"></label>
                 <label>최대 인원<select id="room-max-players"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
-                <label id="room-bot-field" class="hidden">COM 수<input id="room-bot-count" type="number" min="1" max="9"></label>
+                <label id="room-bot-field" class="hidden">COM 수<input id="room-bot-count" type="number" min="0" max="9"></label>
                 <label id="room-blind-field" class="wide hidden">블라인드업<select id="room-blind-up"><option value="1">1분</option><option value="3">3분</option><option value="5">5분</option><option value="10">10분</option><option value="15">15분</option><option value="20">20분</option><option value="30">30분</option></select></label>
               </div>
               <button type="submit">설정 저장</button>
               <small>게임 시작 후에는 종료될 때까지 수정할 수 없습니다.</small>
             </form>
-            <div class="fair"><b>✓ 서버 권위형 게임</b><p>방 설정과 카드, 액션, 결과를 서버에서 검증합니다. 게임 시작 후 설정은 종료 때까지 잠깁니다.</p></div>
+          </div>
+          <div id="gto-card" class="gto-card hidden">
+            <span>COM DECISION ENGINE</span>
+            <div><strong id="gto-status">HYBRID GTO</strong><time id="gto-hits">0 EXACT / 0</time></div>
+            <small id="gto-detail">Solver 정책과 equity 엔진을 불러오는 중입니다.</small>
           </div>
           <div id="tournament-card" class="tournament-card hidden">
             <span>TOURNAMENT LEVEL</span><div><strong id="level-label">LEVEL 1</strong><time id="level-timer">10:00</time></div><small id="next-blinds">NEXT 150 / 300</small>
@@ -139,7 +136,7 @@
             <label>게임 방식<select id="entry-game-mode"><option value="cash">캐시게임</option><option value="tournament">토너먼트</option></select></label>
             <label>시작 칩<input id="entry-starting-chips" type="number" min="1000" max="1000000" step="1000" value="10000" required></label>
             <label>최대 인원<select id="entry-max-players"><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
-            <label id="bot-count-field">COM 수<select id="entry-bot-count"><option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option></select></label>
+            <label id="bot-count-field">COM 수<select id="entry-bot-count"><option value="0">없음</option><option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option></select></label>
             <label id="blind-up-field" class="wide hidden">토너먼트 블라인드업<select id="entry-blind-up"><option value="1">1분</option><option value="3">3분</option><option value="5">5분</option><option value="10" selected>10분</option><option value="15">15분</option><option value="20">20분</option><option value="30">30분</option></select></label>
           </div>
           <div class="setting-notice">게임이 시작되면 종료될 때까지 위 설정이 고정됩니다.</div>
