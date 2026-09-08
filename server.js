@@ -324,9 +324,8 @@ function advanceStreet(room) {
     room.deck.pop(); room.board.push(room.deck.pop()); room.street = 'river'; addLog(room, `RIVER · ${cardName(room.board[4])}`, 'system');
   } else return showdown(room, refund);
   room.actionIndex = room.dealerIndex;
-  broadcast(room);
-  if (refund) broadcastEvent(room, { event: 'chipsReturn', playerId: refund.playerId, amount: refund.amount, label: 'UNCALLED RETURN' });
   continueGame(room);
+  if (refund) broadcastEvent(room, { event: 'chipsReturn', playerId: refund.playerId, amount: refund.amount, label: 'UNCALLED RETURN' });
 }
 
 function cardName(card) { return `${card.rank > 10 ? ['', '', '', '', '', '', '', '', '', '', '', 'J', 'Q', 'K', 'A'][card.rank] : card.rank}${card.suit}`; }
