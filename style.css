@@ -68,8 +68,8 @@ main { width: 100%; max-width: 1500px; margin: 0 auto; padding: 26px 34px 30px; 
 .table-brand { position: absolute; top: 15%; left: 50%; transform: translateX(-50%); color: #86a9a028; font-size: 18px; font-weight: 800; letter-spacing: .18em; white-space: nowrap; }
 .table-brand span { color: #d9f77d32; }
 .pot { position: absolute; z-index: 2; top: 29%; left: 50%; display: grid; transform: translateX(-50%); text-align: center; }
-.pot small, .pot span { color: #8ca59e; font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
-.pot strong { margin: 3px 0 1px; font: 700 24px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.pot small { color: #9cb3ac; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; }
+.pot strong { margin-top: 5px; color: #f4f8f3; font: 800 31px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.055em; text-shadow: 0 3px 14px #000a; white-space: nowrap; }
 .board { position: absolute; z-index: 3; top: 48%; left: 50%; display: flex; gap: 7px; transform: translate(-50%, -50%); }
 .card { position: relative; display: flex; width: 45px; height: 62px; flex-direction: column; justify-content: space-between; padding: 6px; border: 1px solid #fff; border-radius: 5px; background: #f4f4ec; box-shadow: 0 5px 10px #0007; color: #1a2421; font: 800 17px Georgia, serif; }
 .card.red { color: #d94f4c; }

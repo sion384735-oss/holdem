@@ -342,8 +342,7 @@ function render() {
   const playType = room.playType === 'com' ? 'VS COM' : '실시간 배틀';
   const gameMode = room.mode === 'cash' ? '캐시게임' : '토너먼트';
   const connected = game.players.filter(player => player.connected).length;
-  $('#pot-value').textContent = formatChips(game.pot);
-  $('#pot-bb').textContent = formatBB(game.pot);
+  $('#pot-value').textContent = `${formatChips(game.pot)} / ${formatBB(game.pot)}`;
   $('#hand-number').textContent = `HAND #${game.handNumber}`;
   $('#blinds-label').textContent = `${formatChips(game.sb)} / ${formatChips(game.bb)}`;
   $('#player-count').textContent = connected;
@@ -406,8 +405,7 @@ function renderEmptyTable() {
   $('#table-code-label').textContent = 'TABLE —';
   $('#hand-number').textContent = 'HAND —';
   $('#connection-label').textContent = '● OFFLINE';
-  $('#pot-value').textContent = '0';
-  $('#pot-bb').textContent = '0 BB';
+  $('#pot-value').textContent = '0 / 0 BB';
   $('#player-count').textContent = '0';
   $('#max-player-count').textContent = '—';
   $('#online-count').textContent = '0';
@@ -506,4 +504,7 @@ if (queryRoom) {
 } else showEntry('home');
 updateBotOptions();
 renderEmptyTable();
-fetch('/api/info').then(response => response.json()).then(info => { if (info.lanUrl) inviteBase = info.lanUrl; }).catch(() => {});
+fetch('/api/info').then(response => response.json()).then(info => {
+  const loopback = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+  if (loopback && info.lanUrl) inviteBase = info.lanUrl;
+}).catch(() => {});

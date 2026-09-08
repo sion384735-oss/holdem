@@ -48,7 +48,7 @@ async function testRealtimeRoom() {
   const alpha = new TestClient(`alpha-${Date.now()}`, 'ALPHA');
   await alpha.connect({
     type: 'create', playerId: alpha.id, name: alpha.name, playType: 'realtime',
-    settings: { mode: 'tournament', startingChips: 25000, maxPlayers: 4, blindUpMinutes: 3 }
+    settings: { mode: 'tournament', startingChips: 25000, maxPlayers: 10, blindUpMinutes: 3 }
   });
   const created = await alpha.waitFor(message => message.type === 'created');
   await alpha.waitFor(message => message.type === 'state' && message.room.code === created.room);
@@ -64,13 +64,28 @@ async function testRealtimeRoom() {
   await alpha.waitFor(message => message.type === 'state' && message.game.players.filter(player => player.connected).length === 2);
   assert.equal(alpha.state.room.started, false, '두 번째 참가자 입장만으로 자동 시작되면 안 됩니다.');
 
+  const extraPlayers = Array.from({ length: 8 }, (_, index) => new TestClient(`guest-${index}-${Date.now()}`, `GUEST${index + 1}`));
+  await Promise.all(extraPlayers.map(async player => {
+    await player.connect({ type: 'join', playerId: player.id, name: player.name, room: created.room });
+    await player.waitFor(message => message.type === 'joined');
+  }));
+  await alpha.waitFor(message => message.type === 'state' && message.game.players.filter(player => player.connected).length === 10);
+  assert.equal(alpha.state.game.players.length, 10, '한 테이블에 10명이 입장할 수 있어야 합니다.');
+
+  const overflow = new TestClient(`overflow-${Date.now()}`, 'OVERFLOW');
+  await overflow.connect({ type: 'join', playerId: overflow.id, name: overflow.name, room: created.room });
+  await overflow.waitFor(message => message.type === 'error' && message.message.includes('가득 찼습니다'));
+  overflow.close();
+
   alpha.send({ type: 'startGame' });
-  await alpha.waitFor(message => message.type === 'state' && message.room.settingsLocked && message.game.phase === 'playing');
-  await bravo.waitFor(message => message.type === 'state' && message.room.settingsLocked && message.game.phase === 'playing');
+  const playing = await alpha.waitFor(message => message.type === 'state' && message.room.settingsLocked && message.game.phase === 'playing');
+  await Promise.all([bravo, ...extraPlayers].map(player => player.waitFor(message => message.type === 'state' && message.room.settingsLocked && message.game.phase === 'playing')));
   assert.equal(alpha.state.room.mode, 'tournament');
   assert.equal(alpha.state.game.players.every(player => player.stack <= 25000), true);
+  assert.equal(playing.game.players.find(player => player.id === alpha.id).hand.length, 2);
+  assert.equal(playing.game.players.filter(player => player.id !== alpha.id).every(player => player.hand === null), true);
 
-  alpha.send({ type: 'settings', settings: { mode: 'cash', startingChips: 9999, maxPlayers: 4, blindUpMinutes: 1 } });
+  alpha.send({ type: 'settings', settings: { mode: 'cash', startingChips: 9999, maxPlayers: 10, blindUpMinutes: 1 } });
   const lockError = await alpha.waitFor(message => message.type === 'error' && message.message.includes('변경할 수 없습니다'));
   assert.ok(lockError);
   assert.equal(alpha.state.room.mode, 'tournament');
@@ -78,6 +93,7 @@ async function testRealtimeRoom() {
 
   alpha.close();
   bravo.close();
+  extraPlayers.forEach(player => player.close());
   return created.room;
 }
 
