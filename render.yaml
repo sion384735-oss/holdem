@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: felt-club-holdem
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/info
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FELT CLUB — Texas Hold'em</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <button id="logo-home" class="logo"><span>♠</span><b>FELT<em>CLUB</em></b></button>
+      <nav>
+        <button class="nav-item active" data-nav="home"><span>⌂</span>플레이 홈</button>
+        <button class="nav-item" data-nav="com"><span>♣</span>VS COM</button>
+        <button class="nav-item" data-nav="realtime"><span>⚡</span>실시간 배틀</button>
+        <button class="nav-item" data-nav="settings"><span>◇</span>방 설정</button>
+      </nav>
+      <div class="online"><i id="socket-dot"></i><span>ONLINE TABLE</span><b id="online-count">0</b></div>
+      <div class="me-mini"><span id="mini-avatar" class="avatar hero-avatar">P</span><div><b id="mini-name">PLAYER</b><small id="mini-mode">메뉴에서 게임 선택</small></div></div>
+    </aside>
+
+    <main>
+      <header class="header">
+        <div><p id="game-kicker">FELT CLUB · TEXAS HOLD'EM</p><h1 id="table-title">게임을 선택해 주세요</h1></div>
+        <div class="header-actions">
+          <div id="room-chip" class="room-chip hidden"><span id="room-label">ROOM —</span><button id="invite-btn">코드/링크 복사</button><button id="leave-btn">나가기</button></div>
+          <div class="mode-switch"><span id="play-type-label">NO TABLE</span><span id="game-mode-label">—</span></div>
+        </div>
+      </header>
+
+      <section class="game-grid">
+        <div class="game-column">
+          <div class="table-bar">
+            <span class="playing"><i></i> <span id="phase-label">READY</span></span>
+            <span id="table-code-label">TABLE —</span>
+            <span id="hand-number">HAND —</span>
+            <span id="connection-label" class="connection">● OFFLINE</span>
+          </div>
+
+          <div class="table-stage">
+            <div class="poker-table">
+              <div class="felt-line"></div>
+              <div class="table-brand">FELT <span>♠</span> CLUB</div>
+              <div class="pot"><small>TOTAL POT</small><strong id="pot-value">0</strong><span id="pot-bb">0 BB</span></div>
+              <div id="board" class="board" aria-label="커뮤니티 카드"></div>
+              <div id="dealer-button" class="dealer hidden">D</div>
+            </div>
+            <div id="seats"></div>
+            <div id="table-overlay" class="table-overlay">
+              <div class="shuffle-deck hidden"><i></i><i></i><i></i></div>
+              <div id="result-badge" class="result-badge hidden">WIN</div>
+              <strong id="overlay-title">WELCOME TO FELT CLUB</strong>
+              <span id="overlay-detail">메뉴에서 VS COM 또는 실시간 배틀을 선택하세요</span>
+              <button id="start-game-btn" class="hidden">게임 시작</button>
+            </div>
+          </div>
+
+          <section class="action-console">
+            <div class="turn-status">
+              <span class="clock">◷</span>
+              <div><strong id="turn-title">게임을 선택해 주세요</strong><small id="turn-detail">VS COM 또는 실시간 배틀</small></div>
+              <time id="action-timer">--:--</time>
+            </div>
+
+            <div class="sizing-panel">
+              <div class="sizing-head"><span>RAISE TO</span><strong id="raise-display">2 BB</strong></div>
+              <div class="presets">
+                <button data-pot="0.15" disabled>POT 15%</button><button data-pot="0.25" disabled>25%</button><button data-pot="0.50" disabled>50%</button><button data-pot="0.80" disabled>80%</button><button id="all-in" class="all-in" disabled>ALL-IN</button>
+              </div>
+              <div class="raise-inputs"><label><input id="raise-bb" type="number" value="2" min="1" step="0.5" disabled><span>BB</span></label><input id="raise-slider" type="range" min="200" max="10000" value="400" disabled></div>
+            </div>
+
+            <div class="actions">
+              <button id="fold-btn" class="fold" disabled>FOLD</button>
+              <button id="call-btn" class="call" disabled>CHECK</button>
+              <button id="raise-btn" class="raise" disabled>RAISE <span id="raise-button-bb">2 BB</span></button>
+            </div>
+          </section>
+
+          <div class="game-footer"><span>♣ <b id="player-count">0</b> / <b id="max-player-count">—</b> PLAYERS</span><span>BLINDS <b id="blinds-label">100 / 200</b></span><span id="lock-label">설정 대기</span><button id="end-game-btn" class="hidden">■ 게임 종료</button></div>
+        </div>
+
+        <aside class="right-panel">
+          <div class="tabs"><button class="active" data-panel="log-panel">HAND LOG</button><button data-panel="info-panel">TABLE INFO</button></div>
+          <div id="log-panel" class="panel-content"><div id="hand-log" class="hand-log"><div class="empty-panel">게임에 들어가면 기록이 표시됩니다.</div></div></div>
+          <div id="info-panel" class="panel-content hidden">
+            <dl>
+              <div><dt>대전 방식</dt><dd id="info-play-type">—</dd></div>
+              <div><dt>게임 방식</dt><dd id="info-game-mode">—</dd></div>
+              <div><dt>시작 칩</dt><dd id="info-starting-chips">—</dd></div>
+              <div><dt>테이블 인원</dt><dd id="info-table-size">—</dd></div>
+              <div><dt>블라인드 업</dt><dd id="info-blind-up">—</dd></div>
+              <div><dt>설정 상태</dt><dd id="info-lock">게임 전</dd></div>
+            </dl>
+            <div class="fair"><b>✓ 서버 권위형 게임</b><p>방 설정과 카드, 액션, 결과를 서버에서 검증합니다. 게임 시작 후 설정은 종료 때까지 잠깁니다.</p></div>
+          </div>
+          <div id="tournament-card" class="tournament-card hidden">
+            <span>TOURNAMENT LEVEL</span><div><strong id="level-label">LEVEL 1</strong><time id="level-timer">10:00</time></div><small id="next-blinds">NEXT 150 / 300</small>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div id="entry-modal" class="join-modal">
+    <div class="join-card entry-card">
+      <section id="entry-home">
+        <span class="join-logo">♠</span>
+        <p>FELT CLUB · PLAY</p>
+        <h2>어떤 게임을 할까요?</h2>
+        <div class="battle-picker">
+          <button type="button" data-entry="com"><span>♣</span><b>VS COM</b><small>혼자 바로 시작</small></button>
+          <button type="button" data-entry="realtime"><span>⚡</span><b>실시간 배틀</b><small>방 만들기 · 코드 입장</small></button>
+        </div>
+      </section>
+
+      <form id="entry-form" class="hidden">
+        <button id="entry-back" class="entry-back" type="button">← 게임 선택</button>
+        <p id="entry-kicker">VS COM</p>
+        <h2 id="entry-title">COM 대전 설정</h2>
+        <div id="realtime-tabs" class="entry-tabs hidden"><button type="button" data-realtime="create" class="active">방 만들기</button><button type="button" data-realtime="join">코드로 입장</button></div>
+        <label>닉네임<input id="entry-name" maxlength="14" value="PLAYER" autocomplete="nickname" required></label>
+        <div id="host-settings">
+          <div class="form-grid">
+            <label>게임 방식<select id="entry-game-mode"><option value="cash">캐시게임</option><option value="tournament">토너먼트</option></select></label>
+            <label>시작 칩<input id="entry-starting-chips" type="number" min="1000" max="1000000" step="1000" value="10000" required></label>
+            <label>최대 인원<select id="entry-max-players"><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
+            <label id="bot-count-field">COM 수<select id="entry-bot-count"><option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option></select></label>
+            <label id="blind-up-field" class="wide hidden">토너먼트 블라인드업<select id="entry-blind-up"><option value="1">1분</option><option value="3">3분</option><option value="5">5분</option><option value="10" selected>10분</option><option value="15">15분</option><option value="20">20분</option><option value="30">30분</option></select></label>
+          </div>
+          <div class="setting-notice">게임이 시작되면 종료될 때까지 위 설정이 고정됩니다.</div>
+        </div>
+        <div id="join-fields" class="hidden"><label>방 코드<input id="entry-room" maxlength="8" autocomplete="off" placeholder="예: A7K9Q2"></label><small>방장에게 받은 6자리 코드를 입력하세요.</small></div>
+        <button id="entry-submit" class="entry-submit" type="submit">COM 대전 시작 →</button>
+      </form>
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>

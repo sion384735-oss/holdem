@@ -1,0 +1,13 @@
+{
+  "name": "feltclub-poker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "check": "node --check server.js && node --check app.js"
+  },
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
+}
