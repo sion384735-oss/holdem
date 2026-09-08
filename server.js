@@ -6,15 +6,14 @@ const { WebSocketServer, WebSocket } = require('ws');
 const { GtoPolicyEngine, cardToSolverCode } = require('./gto-policy');
 const { EquityGtoBotEngine } = require('./gto-bot');
 const { contestableRaiseTarget, uncalledExcess, buildPotLayers } = require('./poker-rules');
-const { advanceTournamentClock } = require('./tournament-clock');
+const { advanceTournamentClock, tournamentBlindLevel } = require('./tournament-clock');
+const { describeCurrentHand } = require('./hand-strength');
 
 const PORT = Number(process.env.PORT || 5050);
 const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = __dirname;
 const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
-const BLIND_LEVELS = [[100, 200], [150, 300], [200, 400], [300, 600], [400, 800], [600, 1200], [800, 1600], [1000, 2000]];
-const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ACTION_TIMEOUT_MS = Math.max(500, Number(process.env.ACTION_TIMEOUT_MS) || 60000);
 const rooms = new Map();
 const gtoEngine = new GtoPolicyEngine({ policyDir: process.env.GTO_POLICY_DIR || path.join(ROOT, 'gto', 'policies') });
@@ -71,13 +70,14 @@ function createRoom(code, options = {}) {
 }
 
 function generateRoomCode() {
-  let code = '';
-  do {
-    code = Array.from({ length: 6 }, () => ROOM_ALPHABET[Math.floor(Math.random() * ROOM_ALPHABET.length)]).join('');
-  } while (rooms.has(code));
-  return code;
+  const first = Math.floor(Math.random() * 9000);
+  for (let offset = 0; offset < 9000; offset += 1) {
+    const code = String(1000 + ((first + offset) % 9000));
+    if (!rooms.has(code)) return code;
+  }
+  return null;
 }
-function cleanRoomCode(value) { return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); }
+function cleanRoomCode(value) { return String(value || '').replace(/\D/g, '').slice(0, 4); }
 function cleanName(value) { return String(value || 'PLAYER').replace(/[<>]/g, '').trim().slice(0, 14) || 'PLAYER'; }
 function startingStack(room) { return room.startingChips; }
 function inStartPool(player) { return player.connected && player.stack > 0; }
@@ -121,11 +121,15 @@ function serialize(room, viewerId) {
       }
     },
     game: {
-      players: room.players.map(player => ({
-        id: player.id, name: player.name, stack: player.stack, connected: player.connected, isBot: Boolean(player.isBot),
-        inHand: player.inHand, folded: player.folded, allIn: Boolean(player.allIn || player.allInDeclared), roundBet: player.roundBet,
-        hand: player.id === viewerId || (cardsUp && player.inHand && !player.folded) ? player.hand : null
-      })),
+      players: room.players.map(player => {
+        const isViewer = player.id === viewerId;
+        return {
+          id: player.id, name: player.name, stack: player.stack, connected: player.connected, isBot: Boolean(player.isBot),
+          inHand: player.inHand, folded: player.folded, allIn: Boolean(player.allIn || player.allInDeclared), roundBet: player.roundBet,
+          hand: isViewer || (cardsUp && player.inHand && !player.folded) ? player.hand : null,
+          handName: isViewer && player.inHand && !player.folded ? describeCurrentHand(player.hand, room.board) : null
+        };
+      }),
       board: room.board, dealerId: room.players[room.dealerIndex]?.id || null,
       sbId: room.players[room.sbIndex]?.id || null, bbId: room.players[room.bbIndex]?.id || null,
       turnPlayerId: room.players[room.actionIndex]?.id || null, street: room.street, phase: room.phase,
@@ -134,9 +138,8 @@ function serialize(room, viewerId) {
       sb: room.handSB, bb: room.handBB, nextSB: room.sb, nextBB: room.bb,
       level: room.handLevel, nextLevel: room.level,
       blindChangePending: room.mode === 'tournament' && (room.handSB !== room.sb || room.handBB !== room.bb),
-      atMaxBlindLevel: room.level >= BLIND_LEVELS.length - 1,
-      followingSB: BLIND_LEVELS[Math.min(room.level + 1, BLIND_LEVELS.length - 1)][0],
-      followingBB: BLIND_LEVELS[Math.min(room.level + 1, BLIND_LEVELS.length - 1)][1],
+      followingSB: tournamentBlindLevel(room.level + 1)[0],
+      followingBB: tournamentBlindLevel(room.level + 1)[1],
       levelEndsAt: room.levelEndsAt, logs: room.logs, result: room.result, runoutFrom: room.runoutFrom,
       lastHandReview: room.lastHandReview,
       handHistory: room.handHistory
@@ -612,7 +615,7 @@ function applyRoomSettings(room, settings) {
 function resetHandState(room, phase = 'lobby') {
   room.deck = []; room.board = []; room.dealerIndex = -1; room.sbIndex = -1; room.bbIndex = -1; room.actionIndex = -1;
   room.street = 'waiting'; room.phase = phase; room.phaseEndsAt = 0; room.turnEndsAt = 0;
-  room.pot = 0; room.currentBet = 0; room.minRaise = BLIND_LEVELS[0][1]; room.result = null;
+  room.pot = 0; room.currentBet = 0; room.minRaise = tournamentBlindLevel(0)[1]; room.result = null;
   room.runoutFrom = null;
   room.gtoRootPot = 0; room.gtoRootEffectiveStack = 0; room.gtoHistory = [];
   room.streetAggressorId = null; room.previousStreetAggressorId = null;
@@ -626,7 +629,7 @@ function startSession(room) {
   room.started = true; room.settingsLocked = true; room.logs = []; room.level = 0; room.handLevel = 0;
   room.botDecisionStats = { solver: 0, equity: 0 };
   room.lastHandReview = null; room.handHistory = [];
-  [room.sb, room.bb] = BLIND_LEVELS[0];
+  [room.sb, room.bb] = tournamentBlindLevel(0);
   room.levelEndsAt = Date.now() + room.blindUpMinutes * 60000;
   room.players.forEach(player => { if (player.connected) player.stack = room.startingChips; });
   resetHandState(room, 'lobby');
@@ -699,7 +702,9 @@ wss.on('connection', ws => {
     let message;
     try { message = JSON.parse(raw); } catch { return send(ws, { type: 'error', message: '잘못된 요청입니다.' }); }
     if (message.type === 'create') {
-      const room = createRoom(generateRoomCode(), { playType: message.playType, settings: message.settings });
+      const code = generateRoomCode();
+      if (!code) return send(ws, { type: 'error', message: '생성 가능한 방 번호가 모두 사용 중입니다. 잠시 후 다시 시도해 주세요.' });
+      const room = createRoom(code, { playType: message.playType, settings: message.settings });
       const player = enterRoom(ws, room, message);
       if (!player) return;
       room.hostId = player.id;
@@ -750,7 +755,7 @@ wss.on('connection', ws => {
 setInterval(() => {
   const now = Date.now();
   rooms.forEach(room => {
-    const blindUpdate = advanceTournamentClock(room, now, BLIND_LEVELS);
+    const blindUpdate = advanceTournamentClock(room, now, tournamentBlindLevel);
     if (blindUpdate) {
       room.level = blindUpdate.level;
       room.sb = blindUpdate.sb;

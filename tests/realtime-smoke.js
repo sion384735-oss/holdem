@@ -52,7 +52,7 @@ async function testRealtimeRoom() {
   });
   const created = await alpha.waitFor(message => message.type === 'created');
   await alpha.waitFor(message => message.type === 'state' && message.room.code === created.room);
-  assert.equal(created.room.length, 6);
+  assert.match(created.room, /^\d{4}$/, '방 번호는 숫자 4자리여야 합니다.');
   assert.equal(alpha.state.room.started, false);
   assert.equal(alpha.state.room.settingsLocked, false);
   assert.equal(alpha.state.room.startingChips, 25000);
@@ -82,8 +82,10 @@ async function testRealtimeRoom() {
   await Promise.all([bravo, ...extraPlayers].map(player => player.waitFor(message => message.type === 'state' && message.room.settingsLocked && message.game.phase === 'playing')));
   assert.equal(alpha.state.room.mode, 'tournament');
   assert.equal(alpha.state.game.players.every(player => player.stack <= 25000), true);
-  assert.equal(playing.game.players.find(player => player.id === alpha.id).hand.length, 2);
-  assert.equal(playing.game.players.filter(player => player.id !== alpha.id).every(player => player.hand === null), true);
+  const heroState = playing.game.players.find(player => player.id === alpha.id);
+  assert.equal(heroState.hand.length, 2);
+  assert.ok(heroState.handName, '본인에게는 현재 족보가 전달되어야 합니다.');
+  assert.equal(playing.game.players.filter(player => player.id !== alpha.id).every(player => player.hand === null && player.handName === null), true, '상대의 비공개 패와 족보가 노출되면 안 됩니다.');
 
   alpha.send({ type: 'settings', settings: { mode: 'cash', startingChips: 9999, maxPlayers: 10, blindUpMinutes: 1 } });
   const lockError = await alpha.waitFor(message => message.type === 'error' && message.message.includes('변경할 수 없습니다'));

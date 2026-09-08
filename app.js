@@ -289,8 +289,8 @@ function updateTableBlindClock() {
 
   $('#table-blind-timer-label').textContent = game.blindChangePending
     ? `NEXT ${formatChips(game.nextSB)} / ${formatChips(game.nextBB)}`
-    : game.atMaxBlindLevel ? 'FINAL LEVEL' : 'BLIND UP';
-  $('#table-blind-timer').textContent = game.atMaxBlindLevel ? 'MAX' : formatClock(game.levelEndsAt - Date.now());
+    : 'BLIND UP';
+  $('#table-blind-timer').textContent = formatClock(game.levelEndsAt - Date.now());
 }
 
 function renderBoard() {
@@ -318,9 +318,10 @@ function renderSeats() {
     const blind = game.sbId === player.id ? 'SB' : game.bbId === player.id ? 'BB' : '';
     const status = !player.connected ? 'DISCONNECTED' : player.stack <= 0 && !player.inHand ? 'TABLE OUT' : `${formatChips(player.stack)} <i>/</i> ${formatBB(player.stack)}`;
     const name = escapeHTML(player.name);
+    const handName = isHero && player.handName && !player.folded ? escapeHTML(player.handName) : '';
     const turnSeconds = Math.max(0, Math.ceil((game.turnEndsAt - Date.now()) / 1000));
     const countdown = game.phase === 'playing' && game.turnPlayerId === player.id ? `<time class="turn-countdown${turnSeconds <= 10 ? ' urgent' : ''}" style="--turn-progress:${Math.min(360, turnSeconds * 6)}deg">${turnSeconds}</time>` : '';
-    return `<div class="seat seat-${index} ${classes}" style="left:${position.left}%;top:${position.top}%"><div class="player-box">${cards ? `<div class="hole-cards">${player.allIn ? '<span class="all-in-badge">ALL IN</span>' : ''}${cards}${countdown}</div>` : ''}<span class="avatar" style="background:${COLORS[index % COLORS.length]};color:${isHero ? '#18251f' : '#fff'}">${initials(name)}</span><div class="player-info"><b>${name}${player.isBot ? '<span class="badge">COM</span>' : isHero ? '<span class="badge">YOU</span>' : ''}</b><small>${status}</small></div>${blind ? `<span class="blind-badge">${blind}</span>` : ''}</div></div>`;
+    return `<div class="seat seat-${index} ${classes}" style="left:${position.left}%;top:${position.top}%"><div class="player-box">${cards ? `<div class="hole-cards${handName ? ' has-hand-name' : ''}">${handName ? `<span class="current-hand-badge">${handName}</span>` : ''}${player.allIn ? '<span class="all-in-badge">ALL IN</span>' : ''}${cards}${countdown}</div>` : ''}<span class="avatar" style="background:${COLORS[index % COLORS.length]};color:${isHero ? '#18251f' : '#fff'}">${initials(name)}</span><div class="player-info"><b>${name}${player.isBot ? '<span class="badge">COM</span>' : isHero ? '<span class="badge">YOU</span>' : ''}</b><small>${status}</small></div>${blind ? `<span class="blind-badge">${blind}</span>` : ''}</div></div>`;
   }).join('');
   const bets = players.map((player, index) => {
     if (!player.roundBet) return '';
@@ -557,13 +558,11 @@ function render() {
     ? `LEVEL ${game.level + 1} → ${game.nextLevel + 1}`
     : `LEVEL ${game.nextLevel + 1}`;
   $('#level-timer').textContent = room.started
-    ? (game.atMaxBlindLevel ? 'MAX' : formatClock(game.levelEndsAt - Date.now()))
+    ? formatClock(game.levelEndsAt - Date.now())
     : `${String(room.blindUpMinutes).padStart(2, '0')}:00`;
   $('#next-blinds').textContent = game.blindChangePending
     ? `NEXT HAND ${formatChips(game.nextSB)} / ${formatChips(game.nextBB)}`
-    : game.atMaxBlindLevel
-      ? `MAX BLINDS ${formatChips(game.nextSB)} / ${formatChips(game.nextBB)}`
-      : `NEXT LEVEL ${formatChips(game.followingSB)} / ${formatChips(game.followingBB)}`;
+    : `NEXT LEVEL ${formatChips(game.followingSB)} / ${formatChips(game.followingBB)}`;
   $$('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === (room.playType === 'com' ? 'com' : 'realtime')));
 }
 
@@ -610,8 +609,8 @@ $('#entry-form').addEventListener('submit', event => {
   if (!name) return toast('닉네임을 입력해 주세요.');
   sessionStorage.setItem('felt-name', name);
   if (entryMode === 'realtime-join') {
-    const room = $('#entry-room').value.trim().toUpperCase();
-    if (!room) return toast('방 코드를 입력해 주세요.');
+    const room = $('#entry-room').value.replace(/\D/g, '').slice(0, 4);
+    if (room.length !== 4) return toast('숫자 4자리 방 번호를 입력해 주세요.');
     setEntryBusy(true, '입장 중…');
     connectWith({ type: 'join', playerId, name, room });
     return;
@@ -626,6 +625,7 @@ $$('[data-realtime]').forEach(button => button.addEventListener('click', () => {
 $('#entry-back').addEventListener('click', () => showEntry('home'));
 $('#entry-close').addEventListener('click', () => $('#entry-modal').classList.add('hidden'));
 $('#entry-game-mode').addEventListener('change', updateEntryFields);
+$('#entry-room').addEventListener('input', event => { event.target.value = event.target.value.replace(/\D/g, '').slice(0, 4); });
 $('#entry-max-players').addEventListener('change', () => updateBotOptions());
 $('#logo-home').addEventListener('click', () => showEntry('home'));
 $('#room-game-mode').addEventListener('change', updateRoomSettingFields);
@@ -684,7 +684,7 @@ setInterval(() => {
   if (game.phase === 'playing') $('#action-timer').textContent = formatClock(game.turnEndsAt - Date.now());
   else if (game.phase === 'result' || game.phase === 'shuffling' || game.phase === 'runout') { renderActions(); renderOverlay(); }
   if (room.mode === 'tournament' && room.started) {
-    $('#level-timer').textContent = game.atMaxBlindLevel ? 'MAX' : formatClock(game.levelEndsAt - Date.now());
+    $('#level-timer').textContent = formatClock(game.levelEndsAt - Date.now());
   }
   updateTableBlindClock();
   updateCardCountdown();
@@ -693,7 +693,7 @@ setInterval(() => {
 const queryRoom = new URLSearchParams(location.search).get('room');
 $('#entry-name').value = sessionStorage.getItem('felt-name') || `PLAYER${Math.floor(10 + Math.random() * 90)}`;
 if (queryRoom) {
-  $('#entry-room').value = queryRoom.toUpperCase();
+  $('#entry-room').value = queryRoom.replace(/\D/g, '').slice(0, 4);
   showEntry('realtime-join');
 } else showEntry('home');
 updateBotOptions();

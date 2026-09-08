@@ -146,7 +146,7 @@
           </div>
           <div class="setting-notice">게임이 시작되면 종료될 때까지 위 설정이 고정됩니다.</div>
         </div>
-        <div id="join-fields" class="hidden"><label>방 코드<input id="entry-room" maxlength="8" autocomplete="off" placeholder="예: A7K9Q2"></label><small>방장에게 받은 6자리 코드를 입력하세요.</small></div>
+        <div id="join-fields" class="hidden"><label>방 번호<input id="entry-room" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code" placeholder="예: 4827"></label><small>방장에게 받은 숫자 4자리를 입력하세요.</small></div>
         <button id="entry-submit" class="entry-submit" type="submit">COM 대전 시작 →</button>
       </form>
     </div>
