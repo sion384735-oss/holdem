@@ -372,7 +372,7 @@ function resetHandState(room, phase = 'lobby') {
 }
 
 function startSession(room) {
-  const readyPlayers = room.players.filter(inStartPool);
+  const readyPlayers = room.players.filter(player => player.connected);
   if (readyPlayers.length < 2) return false;
   room.started = true; room.settingsLocked = true; room.logs = []; room.level = 0;
   [room.sb, room.bb] = BLIND_LEVELS[0];

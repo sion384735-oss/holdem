@@ -91,6 +91,14 @@ async function testRealtimeRoom() {
   assert.equal(alpha.state.room.mode, 'tournament');
   assert.equal(alpha.state.room.startingChips, 25000);
 
+  const previousHand = alpha.state.game.handNumber;
+  alpha.send({ type: 'endGame' });
+  await alpha.waitFor(message => message.type === 'state' && !message.room.started && message.game.phase === 'gameover');
+  alpha.send({ type: 'startGame' });
+  const restarted = await alpha.waitFor(message => message.type === 'state' && message.room.started && message.game.phase === 'playing' && message.game.handNumber > previousHand);
+  assert.equal(restarted.game.players.filter(player => player.connected).length, 10);
+  assert.equal(restarted.game.players.every(player => player.stack > 0), true, '재시작하면 모든 접속 플레이어의 스택이 복원되어야 합니다.');
+
   alpha.close();
   bravo.close();
   extraPlayers.forEach(player => player.close());
