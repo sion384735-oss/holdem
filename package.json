@@ -10,6 +10,7 @@
     "test:gto": "node tests/gto-policy.test.js",
     "test:bot": "node tests/gto-bot.test.js",
     "test:blinds": "node tests/tournament-clock.test.js",
+    "test:timeout": "node tests/turn-timeout-smoke.js",
     "test:allin": "node tests/all-in-smoke.js",
     "gto:setup": "sh scripts/setup-texassolver.sh",
     "gto:proof": "sh scripts/solve-gto-proof.sh",

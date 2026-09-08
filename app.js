@@ -252,7 +252,7 @@ function animateActionFlash(id, label) {
   if (!anchor) return;
   anchor.querySelector('.action-flash')?.remove();
   const flash = document.createElement('span');
-  flash.className = 'action-flash';
+  flash.className = `action-flash${label === 'AUTO FOLD' ? ' auto-fold' : ''}`;
   flash.textContent = label || 'CHECK';
   anchor.appendChild(flash);
   setTimeout(() => flash.remove(), 1450);

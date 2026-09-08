@@ -15,6 +15,7 @@ const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const BLIND_LEVELS = [[100, 200], [150, 300], [200, 400], [300, 600], [400, 800], [600, 1200], [800, 1600], [1000, 2000]];
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ACTION_TIMEOUT_MS = Math.max(500, Number(process.env.ACTION_TIMEOUT_MS) || 60000);
 const rooms = new Map();
 const gtoEngine = new GtoPolicyEngine({ policyDir: process.env.GTO_POLICY_DIR || path.join(ROOT, 'gto', 'policies') });
 const equityGtoEngine = new EquityGtoBotEngine({ iterations: Number(process.env.BOT_EQUITY_ITERATIONS) || 420 });
@@ -236,9 +237,21 @@ function continueGame(room) {
   const next = nextIndex(room, room.actionIndex, player => canAct(player) && (!player.acted || player.roundBet !== room.currentBet));
   if (next < 0) return advanceStreet(room);
   room.actionIndex = next;
-  room.turnEndsAt = Date.now() + 60000;
+  room.turnEndsAt = Date.now() + ACTION_TIMEOUT_MS;
+  const expectedPlayerId = room.players[next].id;
+  const expectedDeadline = room.turnEndsAt;
+  setTimeout(() => autoFoldExpiredTurn(room, expectedPlayerId, expectedDeadline), ACTION_TIMEOUT_MS + 25);
   broadcast(room);
   scheduleBotAction(room);
+}
+
+function autoFoldExpiredTurn(room, expectedPlayerId, expectedDeadline, now = Date.now()) {
+  if (room.phase !== 'playing' || !room.turnEndsAt || now < room.turnEndsAt) return false;
+  if (expectedDeadline && room.turnEndsAt !== expectedDeadline) return false;
+  const player = room.players[room.actionIndex];
+  if (!player || (expectedPlayerId && player.id !== expectedPlayerId)) return false;
+  performAction(room, player.id, 'fold', 0, true);
+  return true;
 }
 
 function scheduleBotAction(room) {
@@ -356,6 +369,7 @@ function performAction(room, playerId, action, raiseTarget = 0, auto = false) {
   broadcast(room);
   continueGame(room);
   if (checked) broadcastEvent(room, { event: 'actionFlash', playerId: player.id, label: 'CHECK' });
+  if (auto && action === 'fold') broadcastEvent(room, { event: 'actionFlash', playerId: player.id, label: 'AUTO FOLD' });
 }
 
 function startAllInRunout(room, refund = null) {
@@ -747,7 +761,7 @@ setInterval(() => {
       broadcast(room);
     }
     if (room.phase === 'playing' && room.turnEndsAt && now >= room.turnEndsAt) {
-      const player = room.players[room.actionIndex]; if (player) performAction(room, player.id, 'fold', 0, true);
+      autoFoldExpiredTurn(room, null, null, now);
     } else if (room.phase === 'result' && now >= room.phaseEndsAt) {
       if (room.mode === 'tournament' && room.players.filter(inStartPool).length <= 1) finishTournament(room);
       else scheduleShuffle(room);
