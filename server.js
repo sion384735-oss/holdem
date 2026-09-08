@@ -6,6 +6,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const { GtoPolicyEngine, cardToSolverCode } = require('./gto-policy');
 const { EquityGtoBotEngine } = require('./gto-bot');
 const { contestableRaiseTarget, uncalledExcess, buildPotLayers } = require('./poker-rules');
+const { advanceTournamentClock } = require('./tournament-clock');
 
 const PORT = Number(process.env.PORT || 5050);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -56,7 +57,7 @@ function createRoom(code, options = {}) {
     deck: [], board: [], dealerIndex: -1, sbIndex: -1, bbIndex: -1, actionIndex: -1,
     street: 'waiting', phase: 'lobby', phaseEndsAt: 0, turnEndsAt: 0,
     pot: 0, currentBet: 0, minRaise: 200, handNumber: 1000 + Math.floor(Math.random() * 9000),
-    sb: 100, bb: 200, handSB: 100, handBB: 200, level: 0,
+    sb: 100, bb: 200, handSB: 100, handBB: 200, level: 0, handLevel: 0,
     levelEndsAt: Date.now() + settings.blindUpMinutes * 60000,
     logs: [], result: null, lastHandReview: null, handHistory: [], eventSeq: 0, resultSeq: 0, runoutFrom: null,
     gtoRootPot: 0, gtoRootEffectiveStack: 0, gtoHistory: [],
@@ -128,7 +129,12 @@ function serialize(room, viewerId) {
       phaseEndsAt: room.phaseEndsAt, turnEndsAt: room.turnEndsAt, pot: room.pot,
       currentBet: room.currentBet, minRaise: room.minRaise, handNumber: room.handNumber,
       sb: room.handSB, bb: room.handBB, nextSB: room.sb, nextBB: room.bb,
-      level: room.level, levelEndsAt: room.levelEndsAt, logs: room.logs, result: room.result, runoutFrom: room.runoutFrom,
+      level: room.handLevel, nextLevel: room.level,
+      blindChangePending: room.mode === 'tournament' && (room.handSB !== room.sb || room.handBB !== room.bb),
+      atMaxBlindLevel: room.level >= BLIND_LEVELS.length - 1,
+      followingSB: BLIND_LEVELS[Math.min(room.level + 1, BLIND_LEVELS.length - 1)][0],
+      followingBB: BLIND_LEVELS[Math.min(room.level + 1, BLIND_LEVELS.length - 1)][1],
+      levelEndsAt: room.levelEndsAt, logs: room.logs, result: room.result, runoutFrom: room.runoutFrom,
       lastHandReview: room.lastHandReview,
       handHistory: room.handHistory
     }
@@ -189,7 +195,7 @@ function startHand(room) {
   room.runoutFrom = null;
   room.pot = 0; room.currentBet = room.bb; room.minRaise = room.bb; room.board = []; room.deck = createDeck();
   room.gtoRootPot = 0; room.gtoRootEffectiveStack = 0; room.gtoHistory = [];
-  room.handSB = room.sb; room.handBB = room.bb;
+  room.handSB = room.sb; room.handBB = room.bb; room.handLevel = room.level;
   room.players.forEach(player => Object.assign(player, {
     inHand: inStartPool(player), hand: [], folded: !inStartPool(player), allIn: false, allInDeclared: false,
     acted: false, roundBet: 0, totalBet: 0
@@ -202,7 +208,7 @@ function startHand(room) {
   const bbPaid = postChips(room, room.players[room.bbIndex], room.handBB);
   room.actionIndex = room.bbIndex;
   room.logs = [];
-  addLog(room, `HAND #${room.handNumber} · ${room.mode === 'cash' ? '캐시게임' : `토너먼트 LEVEL ${room.level + 1}`}`, 'system');
+  addLog(room, `HAND #${room.handNumber} · ${room.mode === 'cash' ? '캐시게임' : `토너먼트 LEVEL ${room.handLevel + 1}`}`, 'system');
   addLog(room, `${room.players[room.sbIndex].name} SB ${sbPaid}`);
   addLog(room, `${room.players[room.bbIndex].name} BB ${bbPaid}`);
   continueGame(room);
@@ -580,7 +586,7 @@ function resetHandState(room, phase = 'lobby') {
 function startSession(room) {
   const readyPlayers = room.players.filter(player => player.connected);
   if (readyPlayers.length < 2) return false;
-  room.started = true; room.settingsLocked = true; room.logs = []; room.level = 0;
+  room.started = true; room.settingsLocked = true; room.logs = []; room.level = 0; room.handLevel = 0;
   room.botDecisionStats = { solver: 0, equity: 0 };
   room.lastHandReview = null; room.handHistory = [];
   [room.sb, room.bb] = BLIND_LEVELS[0];
@@ -707,10 +713,15 @@ wss.on('connection', ws => {
 setInterval(() => {
   const now = Date.now();
   rooms.forEach(room => {
-    if (room.started && room.mode === 'tournament' && now >= room.levelEndsAt) {
-      room.level = Math.min(room.level + 1, BLIND_LEVELS.length - 1);
-      [room.sb, room.bb] = BLIND_LEVELS[room.level]; room.levelEndsAt = now + room.blindUpMinutes * 60000;
-      addLog(room, `LEVEL UP · ${room.sb} / ${room.bb}`, 'system'); broadcast(room);
+    const blindUpdate = advanceTournamentClock(room, now, BLIND_LEVELS);
+    if (blindUpdate) {
+      room.level = blindUpdate.level;
+      room.sb = blindUpdate.sb;
+      room.bb = blindUpdate.bb;
+      room.levelEndsAt = blindUpdate.levelEndsAt;
+      const nextHand = room.phase === 'playing' || room.phase === 'runout' || room.phase === 'result';
+      addLog(room, `LEVEL UP · ${room.sb} / ${room.bb}${nextHand ? ' · 다음 핸드부터' : ''}`, 'system');
+      broadcast(room);
     }
     if (room.phase === 'playing' && room.turnEndsAt && now >= room.turnEndsAt) {
       const player = room.players[room.actionIndex]; if (player) performAction(room, player.id, 'fold', 0, true);

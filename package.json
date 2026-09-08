@@ -5,10 +5,11 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "check": "node --check server.js && node --check app.js && node --check poker-rules.js && node --check gto-policy.js && node --check gto-bot.js && node --check scripts/import-texassolver.mjs",
+    "check": "node --check server.js && node --check app.js && node --check poker-rules.js && node --check tournament-clock.js && node --check gto-policy.js && node --check gto-bot.js && node --check scripts/import-texassolver.mjs",
     "test:rules": "node tests/poker-rules.test.js",
     "test:gto": "node tests/gto-policy.test.js",
     "test:bot": "node tests/gto-bot.test.js",
+    "test:blinds": "node tests/tournament-clock.test.js",
     "test:allin": "node tests/all-in-smoke.js",
     "gto:setup": "sh scripts/setup-texassolver.sh",
     "gto:proof": "sh scripts/solve-gto-proof.sh",

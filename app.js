@@ -484,7 +484,10 @@ function render() {
   const connected = game.players.filter(player => player.connected).length;
   $('#pot-value').textContent = `${formatChips(game.pot)} / ${formatBB(game.pot)}`;
   $('#hand-number').textContent = `HAND #${game.handNumber}`;
-  $('#blinds-label').textContent = `${formatChips(game.sb)} / ${formatChips(game.bb)}`;
+  $('#blinds-label').textContent = game.blindChangePending
+    ? `${formatChips(game.sb)} / ${formatChips(game.bb)} → ${formatChips(game.nextSB)} / ${formatChips(game.nextBB)} NEXT`
+    : `${formatChips(game.sb)} / ${formatChips(game.bb)}`;
+  $('#blinds-label').classList.toggle('blind-pending', Boolean(game.blindChangePending));
   $('#player-count').textContent = connected;
   $('#max-player-count').textContent = room.maxPlayers;
   $('#online-count').textContent = connected;
@@ -524,9 +527,17 @@ function render() {
   $('#room-bot-field').classList.remove('hidden');
   updateRoomSettingFields();
   $('#tournament-card').classList.toggle('hidden', room.mode !== 'tournament');
-  $('#level-label').textContent = `LEVEL ${game.level + 1}`;
-  $('#level-timer').textContent = room.started ? formatClock(game.levelEndsAt - Date.now()) : `${String(room.blindUpMinutes).padStart(2, '0')}:00`;
-  $('#next-blinds').textContent = `CURRENT ${game.nextSB} / ${game.nextBB}`;
+  $('#level-label').textContent = game.blindChangePending
+    ? `LEVEL ${game.level + 1} → ${game.nextLevel + 1}`
+    : `LEVEL ${game.nextLevel + 1}`;
+  $('#level-timer').textContent = room.started
+    ? (game.atMaxBlindLevel ? 'MAX' : formatClock(game.levelEndsAt - Date.now()))
+    : `${String(room.blindUpMinutes).padStart(2, '0')}:00`;
+  $('#next-blinds').textContent = game.blindChangePending
+    ? `NEXT HAND ${formatChips(game.nextSB)} / ${formatChips(game.nextBB)}`
+    : game.atMaxBlindLevel
+      ? `MAX BLINDS ${formatChips(game.nextSB)} / ${formatChips(game.nextBB)}`
+      : `NEXT LEVEL ${formatChips(game.followingSB)} / ${formatChips(game.followingBB)}`;
   $$('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === (room.playType === 'com' ? 'com' : 'realtime')));
 }
 
@@ -645,7 +656,9 @@ setInterval(() => {
   const { game, room } = snapshot;
   if (game.phase === 'playing') $('#action-timer').textContent = formatClock(game.turnEndsAt - Date.now());
   else if (game.phase === 'result' || game.phase === 'shuffling' || game.phase === 'runout') { renderActions(); renderOverlay(); }
-  if (room.mode === 'tournament' && room.started) $('#level-timer').textContent = formatClock(game.levelEndsAt - Date.now());
+  if (room.mode === 'tournament' && room.started) {
+    $('#level-timer').textContent = game.atMaxBlindLevel ? 'MAX' : formatClock(game.levelEndsAt - Date.now());
+  }
   updateCardCountdown();
 }, 250);
 

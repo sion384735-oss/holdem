@@ -194,6 +194,7 @@ main { width: 100%; max-width: 1500px; margin: 0 auto; padding: 26px 34px 30px; 
 .actions .raise span { display: block; margin-top: 4px; font-size: 8px; opacity: .7; }
 .game-footer { display: flex; gap: 22px; align-items: center; padding: 14px 4px; color: var(--muted); font: 8px ui-monospace, monospace; letter-spacing: .06em; }
 .game-footer b { color: #b8c5bf; }
+.game-footer b.blind-pending { color: var(--lime); }
 .game-footer button { margin-left: auto; background: transparent; color: var(--muted); font: 8px ui-monospace, monospace; }
 .game-footer #end-game-btn { color: var(--red); }
 

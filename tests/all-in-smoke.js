@@ -100,7 +100,7 @@ async function checkRunoutFrom(targetStreet) {
     const caller = actor === host ? guest : host;
     const actorState = state.game.players.find(player => player.id === actor.id);
     actor.send({ type: 'action', action: 'raise', raiseTarget: actorState.roundBet + actorState.stack });
-    await host.waitFor(message => message.type === 'state' && message.game.phase === 'playing' && message.game.turnPlayerId === caller.id);
+    await host.waitFor(message => message.type === 'state' && message.game.phase === 'playing' && message.game.street === targetStreet && message.game.turnPlayerId === caller.id);
     caller.send({ type: 'action', action: 'call' });
 
     const initialBoardSize = targetStreet === 'preflop' ? 0 : targetStreet === 'flop' ? 3 : 4;

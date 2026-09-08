@@ -203,7 +203,7 @@ async function testPostflopAllInRunout(targetStreet) {
   const caller = actor === host ? guest : host;
   const actorState = streetState.game.players.find(player => player.id === actor.id);
   actor.send({ type: 'action', action: 'raise', raiseTarget: actorState.roundBet + actorState.stack });
-  await host.waitFor(message => message.type === 'state' && message.game.phase === 'playing' && message.game.turnPlayerId === caller.id && message.game.currentBet > 0);
+  await host.waitFor(message => message.type === 'state' && message.game.phase === 'playing' && message.game.street === targetStreet && message.game.turnPlayerId === caller.id && message.game.currentBet > 0);
   caller.send({ type: 'action', action: 'call' });
 
   const initialBoardSize = targetStreet === 'flop' ? 3 : 4;
