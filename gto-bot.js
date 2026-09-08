@@ -118,6 +118,125 @@ function boardWetness(board = []) {
   return clamp((maxSuit >= 3 ? 0.5 : maxSuit === 2 ? 0.25 : 0) + closePairs * 0.14, 0, 1);
 }
 
+function analyzePostflopHand(hand = [], board = []) {
+  const unknown = {
+    known: false, category: -1, pairTier: null, flushDraw: false, straightDraw: false,
+    openEnded: false, overcards: 0, drawQuality: 0, blockerQuality: 0
+  };
+  if (!Array.isArray(hand) || hand.length !== 2 || !Array.isArray(board) || board.length < 3 || board.length > 5) return unknown;
+  const cards = [...hand, ...board];
+  if (new Set(cards.map(cardKey)).size !== cards.length) return unknown;
+  const score = evaluateSeven(cards);
+  const category = score[0];
+  const boardRanks = [...new Set(board.map(card => card.rank))].sort((left, right) => right - left);
+  let pairTier = null;
+
+  if (category === 1) {
+    const pairRank = score[1];
+    const holeMatches = hand.filter(card => card.rank === pairRank).length;
+    const boardMatches = board.filter(card => card.rank === pairRank).length;
+    if (holeMatches === 2 && boardMatches === 0) pairTier = pairRank > boardRanks[0] ? 'overpair' : 'underpair';
+    else if (holeMatches && boardMatches) {
+      if (pairRank === boardRanks[0]) pairTier = 'top-pair';
+      else if (pairRank === boardRanks[boardRanks.length - 1]) pairTier = 'bottom-pair';
+      else pairTier = 'middle-pair';
+    } else pairTier = 'board-pair';
+  }
+
+  const suitCounts = new Map();
+  cards.forEach(card => suitCounts.set(card.suit, (suitCounts.get(card.suit) || 0) + 1));
+  const flushSuit = [...suitCounts.entries()].sort((left, right) => right[1] - left[1])[0];
+  const flushDraw = board.length < 5 && category < 5 && flushSuit?.[1] === 4 && hand.some(card => card.suit === flushSuit[0]);
+
+  const ranks = new Set(cards.map(card => card.rank));
+  if (ranks.has(14)) ranks.add(1);
+  let fourCardWindows = 0;
+  let openEnded = false;
+  for (let high = 5; high <= 14; high += 1) {
+    const window = Array.from({ length: 5 }, (_, index) => high - index);
+    const present = window.filter(rank => ranks.has(rank));
+    if (present.length !== 4) continue;
+    fourCardWindows += 1;
+    const missing = window.find(rank => !ranks.has(rank));
+    if (missing !== window[0] && missing !== window[window.length - 1]) continue;
+    const held = present.slice().sort((left, right) => left - right);
+    if (held[0] > 1 && held[held.length - 1] < 14) openEnded = true;
+  }
+  const straightDraw = board.length < 5 && category < 4 && fourCardWindows > 0;
+  const overcards = category === 0 ? hand.filter(card => card.rank > boardRanks[0]).length : 0;
+  const drawQuality = flushDraw
+    ? (hand.some(card => card.rank === 14 && card.suit === flushSuit[0]) ? 1 : 0.88)
+    : straightDraw ? (openEnded || fourCardWindows > 1 ? 0.78 : 0.56)
+      : overcards === 2 ? 0.3 : 0;
+
+  const boardSuitCounts = new Map();
+  board.forEach(card => boardSuitCounts.set(card.suit, (boardSuitCounts.get(card.suit) || 0) + 1));
+  const blockedSuit = [...boardSuitCounts.entries()].sort((left, right) => right[1] - left[1])[0];
+  let blockerQuality = 0;
+  if (category < 5 && blockedSuit?.[1] >= 3) {
+    const blocker = hand.filter(card => card.suit === blockedSuit[0]).sort((left, right) => right.rank - left.rank)[0];
+    if (blocker?.rank === 14) blockerQuality = 1;
+    else if (blocker?.rank === 13) blockerQuality = 0.78;
+    else if (blocker?.rank === 12) blockerQuality = 0.58;
+  }
+
+  return { known: true, category, pairTier, flushDraw, straightDraw, openEnded, overcards, drawQuality, blockerQuality };
+}
+
+function marginalPairDefenseFrequency(context, profile, edge, potOdds) {
+  const streetIndex = { flop: 0, turn: 1, river: 2 }[context.street] ?? 0;
+  const bases = {
+    'middle-pair': [0.58, 0.36, 0.16],
+    'bottom-pair': [0.42, 0.23, 0.08],
+    underpair: [0.3, 0.14, 0.045],
+    'board-pair': [0.24, 0.1, 0.03]
+  };
+  const base = bases[profile.pairTier]?.[streetIndex];
+  if (base === undefined) return null;
+  const betToPot = context.needed / Math.max(1, context.pot - context.needed);
+  const pressureAdjustment = -clamp((betToPot - 0.33) * 0.28, 0, 0.25);
+  const priceAdjustment = clamp((0.25 - potOdds) * 0.7, -0.2, 0.15);
+  const repeatedAggression = Math.max(0, Number(context.streetAggressionCount || 0) - 1) * 0.1
+    + Math.max(0, Number(context.postflopAggressiveStreets || 0) - 1) * 0.055;
+  const drawAdjustment = profile.drawQuality * 0.14;
+  const positionAdjustment = context.inPosition ? 0.035 : -0.025;
+  const equityAdjustment = clamp(edge * 0.65, -0.16, 0.1);
+  return clamp(base + pressureAdjustment + priceAdjustment + drawAdjustment + positionAdjustment + equityAdjustment - repeatedAggression, 0.01, 0.92);
+}
+
+function postflopBluffFrequency(context, profile) {
+  if (!profile.known || profile.category > 0) return 0;
+  let frequency = 0;
+  if (context.street === 'river') {
+    frequency = profile.blockerQuality >= 0.75 ? 0.2 + profile.blockerQuality * 0.08 : 0.045;
+  } else if (profile.drawQuality >= 0.85) frequency = 0.34;
+  else if (profile.drawQuality >= 0.55) frequency = 0.25;
+  else if (profile.overcards === 2) frequency = 0.13;
+  else if (profile.blockerQuality >= 0.75) frequency = 0.1;
+  if (context.hasInitiative) frequency += 0.07;
+  if (context.inPosition) frequency += 0.045;
+  else frequency -= 0.025;
+  if (context.opponentCount > 1) frequency *= 0.45;
+  return clamp(frequency, 0, 0.52);
+}
+
+function bluffRaiseFrequency(context, profile) {
+  if (!profile.known || context.facingAllIn || context.opponentCount > 2) return 0;
+  const candidateQuality = context.street === 'river' ? profile.blockerQuality : profile.drawQuality;
+  if (candidateQuality < 0.55) return 0;
+  let frequency = (context.street === 'river' ? 0.12 : 0.095) * candidateQuality;
+  if (context.inPosition) frequency += 0.025;
+  if (context.opponentCount > 1) frequency *= 0.45;
+  frequency -= Math.max(0, Number(context.streetAggressionCount || 0) - 1) * 0.025;
+  return clamp(frequency, 0, 0.18);
+}
+
+function valueBetMultiplier(profile) {
+  if (!profile.known) return 1;
+  if (profile.category >= 2) return 1;
+  return { overpair: 0.9, 'top-pair': 0.7, 'middle-pair': 0.2, 'bottom-pair': 0.08 }[profile.pairTier] || 0;
+}
+
 function raiseDecision(context, equity, bluff = false) {
   const maximum = context.playerRoundBet + context.playerStack;
   const minimum = context.currentBet === 0 ? context.bb : context.currentBet + context.minRaise;
@@ -155,6 +274,7 @@ function decideUnopenedPreflop(context, equity, random) {
 
 function decisionFromEquity(context, rawEquity, random = Math.random) {
   const equity = clamp(rawEquity, 0, 1);
+  const profile = context.street === 'preflop' ? analyzePostflopHand() : analyzePostflopHand(context.hand, context.board);
   const pot = Math.max(0, context.pot);
   const needed = Math.max(0, context.needed);
   const potOdds = needed > 0 ? needed / Math.max(1, pot + needed) : 0;
@@ -163,8 +283,15 @@ function decisionFromEquity(context, rawEquity, random = Math.random) {
   const preflopPenalty = context.street === 'preflop' && context.currentBet > context.bb
     ? clamp((context.currentBet / context.bb - 1) * 0.018, 0.025, 0.13)
     : 0;
-  const postflopPenalty = context.street !== 'preflop' && needed > 0 ? clamp(betPressure * 0.055, 0.015, 0.11) : 0;
-  const rangePenalty = preflopPenalty + postflopPenalty + (allInCall ? 0.035 : 0);
+  const postflopPressureScale = { flop: 0.075, turn: 0.1, river: 0.13 }[context.street] || 0;
+  const postflopPenalty = context.street !== 'preflop' && needed > 0
+    ? clamp(betPressure * postflopPressureScale, 0.02, 0.2)
+    : 0;
+  const aggressionPenalty = context.street !== 'preflop' && needed > 0
+    ? clamp(Math.max(0, Number(context.streetAggressionCount || 0) - 1) * 0.035
+      + Math.max(0, Number(context.postflopAggressiveStreets || 0) - 1) * 0.02, 0, 0.11)
+    : 0;
+  const rangePenalty = preflopPenalty + postflopPenalty + aggressionPenalty + (allInCall ? 0.035 : 0);
   const positionRealization = context.inPosition && !allInCall ? 0.012 : 0;
   const adjustedEquity = clamp(equity - rangePenalty + positionRealization, 0, 1);
   const riskPremium = (context.mode === 'tournament' ? 0.018 : 0.008) + (context.opponentCount > 1 ? 0.008 : 0);
@@ -177,21 +304,37 @@ function decisionFromEquity(context, rawEquity, random = Math.random) {
   }
 
   if (needed > 0) {
+    const marginalDefense = marginalPairDefenseFrequency(context, profile, edge, potOdds);
+    if (marginalDefense !== null) {
+      const raiseFrequency = allInCall ? 0 : bluffRaiseFrequency(context, profile);
+      const roll = random();
+      if (roll < raiseFrequency) {
+        return {
+          ...raiseDecision(context, equity, true), equity, adjustedEquity, potOdds, requiredEquity, edge,
+          reason: 'draw-blocker-raise'
+        };
+      }
+      const action = roll < raiseFrequency + (1 - raiseFrequency) * marginalDefense ? 'call' : 'fold';
+      return { action, equity, adjustedEquity, potOdds, requiredEquity, edge, reason: `${profile.pairTier}-defense` };
+    }
     if (allInCall) {
       const callFrequency = clamp(0.5 + edge * 8, 0.015, 0.985);
       const action = random() < callFrequency ? 'call' : 'fold';
       return { action, equity, adjustedEquity, potOdds, requiredEquity, edge, reason: 'all-in-pot-odds' };
     }
-    const canValueRaise = adjustedEquity > Math.max(0.58, requiredEquity + 0.2);
+    const canValueRaise = adjustedEquity > Math.max(0.58, requiredEquity + 0.2) && (!profile.known || profile.category >= 1);
     const valueRaiseFrequency = clamp((adjustedEquity - Math.max(0.58, requiredEquity + 0.2)) * 2.8 + 0.2, 0, 0.72);
     if (canValueRaise && random() < valueRaiseFrequency) {
-      return { ...raiseDecision(context, equity), equity, adjustedEquity, potOdds, requiredEquity, edge, reason: 'value-raise' };
+        return { ...raiseDecision(context, equity), equity, adjustedEquity, potOdds, requiredEquity, edge, reason: 'value-raise' };
+    }
+    const candidateBluffRaiseFrequency = bluffRaiseFrequency(context, profile);
+    if (random() < candidateBluffRaiseFrequency) {
+      return {
+        ...raiseDecision(context, equity, true), equity, adjustedEquity, potOdds, requiredEquity, edge,
+        reason: context.street === 'river' ? 'blocker-bluff-raise' : 'semi-bluff-raise'
+      };
     }
     if (edge <= -0.075) {
-      const bluffRaiseFrequency = context.opponentCount === 1 && context.inPosition ? 0.035 : 0.01;
-      if (random() < bluffRaiseFrequency) {
-        return { ...raiseDecision(context, equity, true), equity, adjustedEquity, potOdds, requiredEquity, edge, reason: 'polar-bluff' };
-      }
       return { action: 'fold', equity, adjustedEquity, potOdds, requiredEquity, edge, reason: 'below-pot-odds' };
     }
     const continueFrequency = clamp(0.5 + edge * 6.5, 0.06, 0.96);
@@ -203,13 +346,39 @@ function decisionFromEquity(context, rawEquity, random = Math.random) {
   const valueThreshold = fairShare + (1 - fairShare) * (context.opponentCount === 1 ? 0.14 : 0.2);
   const strong = equity >= valueThreshold;
   const weak = equity < fairShare * 0.72;
-  const valueBetFrequency = strong ? clamp(0.42 + (equity - valueThreshold) * 1.7, 0.42, 0.9) : 0;
-  const bluffFrequency = weak ? (context.opponentCount === 1 ? (context.inPosition ? 0.14 : 0.09) : 0.035) : 0;
-  if (random() < valueBetFrequency) {
+  const valueBetFrequency = strong
+    ? clamp(0.42 + (equity - valueThreshold) * 1.7, 0.42, 0.9) * valueBetMultiplier(profile)
+    : 0;
+  const bluffFrequency = profile.known
+    ? postflopBluffFrequency(context, profile)
+    : weak ? (context.opponentCount === 1 ? (context.inPosition ? 0.14 : 0.09) : 0.035) : 0;
+
+  if (context.isDonkOpportunity) {
+    const wetness = boardWetness(context.board);
+    const laterStreetLeadFrequency = context.street === 'flop'
+      ? 0
+      : wetness >= 0.62 ? 0.08 : 0.025;
+    const polarizedLeadFrequency = strong
+      ? laterStreetLeadFrequency * valueBetMultiplier(profile) * (equity >= 0.82 ? 1 : 0.35)
+      : Math.max(profile.drawQuality, profile.blockerQuality) >= 0.55 ? laterStreetLeadFrequency * 0.24 : 0;
+    if (random() < polarizedLeadFrequency) {
+      return {
+        ...raiseDecision(context, equity, !strong), equity, adjustedEquity, potOdds, requiredEquity, edge,
+        reason: strong ? 'polarized-donk-value' : 'polarized-donk-bluff'
+      };
+    }
+    return { action: 'call', equity, adjustedEquity, potOdds, requiredEquity, edge, reason: 'donk-range-check' };
+  }
+
+  const betRoll = random();
+  if (betRoll < valueBetFrequency) {
     return { ...raiseDecision(context, equity), equity, adjustedEquity, potOdds, requiredEquity, edge, reason: 'value-bet' };
   }
-  if (random() < bluffFrequency) {
-    return { ...raiseDecision(context, equity, true), equity, adjustedEquity, potOdds, requiredEquity, edge, reason: 'polar-bluff' };
+  if (betRoll < valueBetFrequency + (1 - valueBetFrequency) * bluffFrequency) {
+    return {
+      ...raiseDecision(context, equity, true), equity, adjustedEquity, potOdds, requiredEquity, edge,
+      reason: context.street === 'river' ? 'blocker-bluff' : 'semi-bluff'
+    };
   }
   return { action: 'call', equity, adjustedEquity, potOdds, requiredEquity, edge, reason: 'range-check' };
 }
@@ -230,10 +399,10 @@ class EquityGtoBotEngine {
     const decision = decisionFromEquity(context, equity, random);
     this.metrics.decisions += 1;
     this.metrics[`${decision.action}s`] += 1;
-    return { ...decision, source: 'equity-gto-v1', approximate: true };
+    return { ...decision, source: 'equity-gto-v3', approximate: true };
   }
 
-  status() { return { version: 'equity-gto-v1', iterations: this.iterations, ...this.metrics }; }
+  status() { return { version: 'equity-gto-v3', iterations: this.iterations, ...this.metrics }; }
 }
 
-module.exports = { EquityGtoBotEngine, estimateEquity, decisionFromEquity, evaluateSeven, compareScores };
+module.exports = { EquityGtoBotEngine, estimateEquity, decisionFromEquity, analyzePostflopHand, evaluateSeven, compareScores };

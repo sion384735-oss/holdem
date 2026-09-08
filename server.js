@@ -61,6 +61,8 @@ function createRoom(code, options = {}) {
     levelEndsAt: Date.now() + settings.blindUpMinutes * 60000,
     logs: [], result: null, lastHandReview: null, handHistory: [], eventSeq: 0, resultSeq: 0, runoutFrom: null,
     gtoRootPot: 0, gtoRootEffectiveStack: 0, gtoHistory: [],
+    streetAggressorId: null, previousStreetAggressorId: null,
+    streetAggressionCount: 0, postflopAggressiveStreets: 0,
     botDecisionStats: { solver: 0, equity: 0 }
   };
   rooms.set(code, room);
@@ -195,6 +197,8 @@ function startHand(room) {
   room.runoutFrom = null;
   room.pot = 0; room.currentBet = room.bb; room.minRaise = room.bb; room.board = []; room.deck = createDeck();
   room.gtoRootPot = 0; room.gtoRootEffectiveStack = 0; room.gtoHistory = [];
+  room.streetAggressorId = null; room.previousStreetAggressorId = null;
+  room.streetAggressionCount = 0; room.postflopAggressiveStreets = 0;
   room.handSB = room.sb; room.handBB = room.bb; room.handLevel = room.level;
   room.players.forEach(player => Object.assign(player, {
     inHand: inStartPool(player), hand: [], folded: !inStartPool(player), allIn: false, allInDeclared: false,
@@ -263,6 +267,13 @@ function scheduleBotAction(room) {
     }
     const needed = callAmount(room, player);
     const opponents = contenders(room).filter(other => other.id !== player.id);
+    const previousAggressor = room.players.find(other => other.id === room.previousStreetAggressorId);
+    const isDonkOpportunity = ['flop', 'turn', 'river'].includes(room.street)
+      && room.currentBet === 0
+      && Boolean(previousAggressor)
+      && previousAggressor.id !== player.id
+      && canAct(previousAggressor)
+      && !previousAggressor.acted;
     const equityDecision = equityGtoEngine.decide({
       street: room.street,
       mode: room.mode,
@@ -277,6 +288,10 @@ function scheduleBotAction(room) {
       playerStack: player.stack,
       opponentCount: opponents.length,
       inPosition: player.id === room.players[room.dealerIndex]?.id,
+      hasInitiative: room.previousStreetAggressorId === player.id,
+      isDonkOpportunity,
+      streetAggressionCount: room.streetAggressionCount,
+      postflopAggressiveStreets: room.postflopAggressiveStreets,
       facingAllIn: opponents.some(opponent => (opponent.allIn || opponent.allInDeclared) && opponent.roundBet >= room.currentBet && room.currentBet > player.roundBet)
     });
     player.lastDecisionSource = equityDecision.source;
@@ -312,6 +327,9 @@ function performAction(room, playerId, action, raiseTarget = 0, auto = false) {
     paid = postChips(room, player, target - player.roundBet);
     if (declaredAllIn) player.allInDeclared = true;
     if (player.roundBet > oldBet) {
+      room.streetAggressorId = player.id;
+      if (room.streetAggressionCount === 0 && ['flop', 'turn', 'river'].includes(room.street)) room.postflopAggressiveStreets += 1;
+      room.streetAggressionCount += 1;
       const increase = player.roundBet - oldBet;
       if (increase >= room.minRaise || player.allIn || declaredAllIn) {
         if (increase >= room.minRaise) room.minRaise = Math.max(room.handBB, increase);
@@ -382,6 +400,9 @@ function advanceStreet(room) {
   const refund = settleUncalledExcess(room);
   const live = contenders(room);
   if (live.length > 1 && live.filter(canAct).length <= 1) return startAllInRunout(room, refund);
+  room.previousStreetAggressorId = room.streetAggressorId;
+  room.streetAggressorId = null;
+  room.streetAggressionCount = 0;
   room.players.forEach(player => { player.roundBet = 0; player.acted = false; });
   room.currentBet = 0; room.minRaise = room.handBB;
   if (room.street === 'preflop') {
@@ -580,6 +601,8 @@ function resetHandState(room, phase = 'lobby') {
   room.pot = 0; room.currentBet = 0; room.minRaise = BLIND_LEVELS[0][1]; room.result = null;
   room.runoutFrom = null;
   room.gtoRootPot = 0; room.gtoRootEffectiveStack = 0; room.gtoHistory = [];
+  room.streetAggressorId = null; room.previousStreetAggressorId = null;
+  room.streetAggressionCount = 0; room.postflopAggressiveStreets = 0;
   room.players.forEach(player => Object.assign(player, { inHand: false, hand: [], folded: false, allIn: false, allInDeclared: false, acted: false, roundBet: 0, totalBet: 0 }));
 }
 

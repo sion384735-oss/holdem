@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { EquityGtoBotEngine, estimateEquity, decisionFromEquity, evaluateSeven, compareScores } = require('../gto-bot');
+const { EquityGtoBotEngine, estimateEquity, decisionFromEquity, analyzePostflopHand, evaluateSeven, compareScores } = require('../gto-bot');
 
 function seededRandom(initialSeed) {
   let seed = initialSeed >>> 0;
@@ -59,14 +59,84 @@ const checkedToContext = {
 assert.equal(decisionFromEquity(checkedToContext, 0.86, () => 0).action, 'raise', '강한 패는 체크를 받았을 때 밸류 베팅해야 합니다.');
 assert.equal(decisionFromEquity(checkedToContext, 0.51, () => 0.99).action, 'call', '중간 패는 일정 빈도로 체크백해야 합니다.');
 
+const flopDonkContext = {
+  ...checkedToContext,
+  inPosition: false,
+  hasInitiative: false,
+  isDonkOpportunity: true
+};
+const topPairDonkDecision = decisionFromEquity(flopDonkContext, 0.72, () => 0);
+assert.equal(topPairDonkDecision.action, 'call', '정확한 솔버 정책이 없는 플랍에서 탑페어로 자동 동크벳하면 안 됩니다.');
+assert.equal(topPairDonkDecision.reason, 'donk-range-check');
+
+const checkedToTopPairDecision = decisionFromEquity({ ...flopDonkContext, isDonkOpportunity: false }, 0.72, () => 0);
+assert.equal(checkedToTopPairDecision.action, 'raise', '이전 공격자가 체크한 뒤의 탑페어 밸류벳은 동크로 잘못 분류하면 안 됩니다.');
+
+assert.equal(analyzePostflopHand(
+  [card(8, '♥'), card(13, '♣')], [card(14, '♠'), card(8, '♦'), card(2, '♣')]
+).pairTier, 'middle-pair');
+assert.equal(analyzePostflopHand(
+  [card(2, '♥'), card(13, '♣')], [card(14, '♠'), card(8, '♦'), card(2, '♣')]
+).pairTier, 'bottom-pair');
+assert.equal(analyzePostflopHand(
+  [card(7, '♥'), card(7, '♣')], [card(14, '♠'), card(8, '♦'), card(2, '♣')]
+).pairTier, 'underpair');
+
+function actionCount(context, equity, samples, seed, action) {
+  const random = seededRandom(seed);
+  let count = 0;
+  for (let sample = 0; sample < samples; sample += 1) {
+    if (decisionFromEquity(context, equity, random).action === action) count += 1;
+  }
+  return count;
+}
+
+const bottomPairFlop = {
+  street: 'flop', mode: 'cash', hand: [card(2, '♥'), card(13, '♣')],
+  board: [card(14, '♠'), card(8, '♦'), card(2, '♣')], pot: 1500, needed: 600,
+  currentBet: 600, minRaise: 600, bb: 200, playerRoundBet: 0, playerStack: 9400,
+  opponentCount: 1, inPosition: false, facingAllIn: false, streetAggressionCount: 1, postflopAggressiveStreets: 1
+};
+const bottomPairRiver = {
+  ...bottomPairFlop, street: 'river', board: [...bottomPairFlop.board, card(11, '♠'), card(4, '♥')],
+  postflopAggressiveStreets: 3
+};
+const bottomFlopCalls = actionCount(bottomPairFlop, 0.42, 2000, 90, 'call');
+const bottomRiverCalls = actionCount(bottomPairRiver, 0.28, 2000, 91, 'call');
+assert.ok(bottomFlopCalls > 400 && bottomFlopCalls < 900, `바텀페어 플랍 방어 빈도가 비정상입니다: ${bottomFlopCalls}/2000`);
+assert.ok(bottomRiverCalls < 100, `여러 스트리트 압박을 받은 바텀페어가 리버까지 너무 자주 따라갑니다: ${bottomRiverCalls}/2000`);
+
+const flushDrawContext = {
+  ...checkedToContext,
+  hand: [card(13, '♥'), card(12, '♥')],
+  board: [card(14, '♠'), card(7, '♥'), card(2, '♥')],
+  hasInitiative: true,
+  isDonkOpportunity: false
+};
+const flushDrawProfile = analyzePostflopHand(flushDrawContext.hand, flushDrawContext.board);
+assert.equal(flushDrawProfile.flushDraw, true);
+const semiBluffs = actionCount(flushDrawContext, 0.46, 2000, 92, 'raise');
+assert.ok(semiBluffs > 700 && semiBluffs < 1050, `플러시 드로 세미블러프 빈도가 부족하거나 과합니다: ${semiBluffs}/2000`);
+
+const blockerBluffContext = {
+  ...flushDrawContext,
+  street: 'river',
+  hand: [card(13, '♥'), card(12, '♣')],
+  board: [card(14, '♠'), card(7, '♥'), card(2, '♥'), card(3, '♦'), card(9, '♥')]
+};
+const blockerProfile = analyzePostflopHand(blockerBluffContext.hand, blockerBluffContext.board);
+assert.ok(blockerProfile.blockerQuality >= 0.75, '리버 플러시 블로커를 인식해야 합니다.');
+const blockerBluffs = actionCount(blockerBluffContext, 0.18, 2000, 93, 'raise');
+assert.ok(blockerBluffs > 550 && blockerBluffs < 900, `리버 블로커 블러프 빈도가 부족하거나 과합니다: ${blockerBluffs}/2000`);
+
 const engine = new EquityGtoBotEngine({ iterations: 100 });
 const engineDecision = engine.decide({
   ...checkedToContext,
   hand: [card(14, '♥'), card(14, '♦')],
   board: [card(14, '♠'), card(8, '♦'), card(2, '♣'), card(3, '♥'), card(4, '♠')]
 }, seededRandom(7));
-assert.equal(engineDecision.source, 'equity-gto-v1');
+assert.equal(engineDecision.source, 'equity-gto-v3');
 assert.equal(engine.status().decisions, 1);
 assert.equal(engine.status()[`${engineDecision.action}s`], 1);
 
-console.log(`PASS equity AA=${acesEquity.toFixed(3)} 72o=${sevenDeuceEquity.toFixed(3)} weak-all-in-calls=${weakCalls}/1000 strong-all-in-calls=${strongCalls}/1000 mixed-strategy=ok`);
+console.log(`PASS equity AA=${acesEquity.toFixed(3)} 72o=${sevenDeuceEquity.toFixed(3)} weak-all-in-calls=${weakCalls}/1000 strong-all-in-calls=${strongCalls}/1000 bottom-pair=${bottomFlopCalls}/2000→${bottomRiverCalls}/2000 semi-bluffs=${semiBluffs}/2000 blocker-bluffs=${blockerBluffs}/2000`);
