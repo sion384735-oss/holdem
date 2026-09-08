@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { WebSocketServer, WebSocket } = require('ws');
+const { contestableRaiseTarget, uncalledExcess, buildPotLayers } = require('./poker-rules');
 
 const PORT = Number(process.env.PORT || 5050);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -52,7 +53,7 @@ function createRoom(code, options = {}) {
     pot: 0, currentBet: 0, minRaise: 200, handNumber: 1000 + Math.floor(Math.random() * 9000),
     sb: 100, bb: 200, handSB: 100, handBB: 200, level: 0,
     levelEndsAt: Date.now() + settings.blindUpMinutes * 60000,
-    logs: [], result: null, eventSeq: 0, resultSeq: 0
+    logs: [], result: null, runoutFrom: null, eventSeq: 0, resultSeq: 0
   };
   rooms.set(code, room);
   return room;
@@ -69,7 +70,7 @@ function cleanRoomCode(value) { return String(value || '').toUpperCase().replace
 function cleanName(value) { return String(value || 'PLAYER').replace(/[<>]/g, '').trim().slice(0, 14) || 'PLAYER'; }
 function startingStack(room) { return room.startingChips; }
 function inStartPool(player) { return player.connected && player.stack > 0; }
-function canAct(player) { return player.inHand && !player.folded && !player.allIn && player.stack > 0; }
+function canAct(player) { return player.inHand && !player.folded && !player.allIn && !player.allInDeclared && player.stack > 0; }
 function contenders(room) { return room.players.filter(player => player.inHand && !player.folded); }
 function nextIndex(room, from, predicate) {
   for (let step = 1; step <= room.players.length; step += 1) {
@@ -94,7 +95,7 @@ function postChips(room, player, amount) {
 function callAmount(room, player) { return Math.min(player.stack, Math.max(0, room.currentBet - player.roundBet)); }
 
 function serialize(room, viewerId) {
-  const showdown = room.phase === 'result' && room.street === 'showdown';
+  const cardsUp = room.phase === 'runout' || (room.phase === 'result' && room.street === 'showdown');
   return {
     type: 'state', you: viewerId,
     room: {
@@ -106,8 +107,8 @@ function serialize(room, viewerId) {
     game: {
       players: room.players.map(player => ({
         id: player.id, name: player.name, stack: player.stack, connected: player.connected, isBot: Boolean(player.isBot),
-        inHand: player.inHand, folded: player.folded, allIn: player.allIn, roundBet: player.roundBet,
-        hand: player.id === viewerId || (showdown && player.inHand && !player.folded) ? player.hand : null
+        inHand: player.inHand, folded: player.folded, allIn: Boolean(player.allIn || player.allInDeclared), roundBet: player.roundBet,
+        hand: player.id === viewerId || (cardsUp && player.inHand && !player.folded) ? player.hand : null
       })),
       board: room.board, dealerId: room.players[room.dealerIndex]?.id || null,
       sbId: room.players[room.sbIndex]?.id || null, bbId: room.players[room.bbIndex]?.id || null,
@@ -115,7 +116,8 @@ function serialize(room, viewerId) {
       phaseEndsAt: room.phaseEndsAt, turnEndsAt: room.turnEndsAt, pot: room.pot,
       currentBet: room.currentBet, minRaise: room.minRaise, handNumber: room.handNumber,
       sb: room.handSB, bb: room.handBB, nextSB: room.sb, nextBB: room.bb,
-      level: room.level, levelEndsAt: room.levelEndsAt, logs: room.logs, result: room.result
+      level: room.level, levelEndsAt: room.levelEndsAt, logs: room.logs, result: room.result,
+      runoutFrom: room.runoutFrom
     }
   };
 }
@@ -125,6 +127,23 @@ function broadcast(room) { room.sockets.forEach((ws, playerId) => send(ws, seria
 function broadcastEvent(room, event) {
   room.eventSeq += 1;
   room.sockets.forEach(ws => send(ws, { type: 'event', seq: room.eventSeq, ...event }));
+}
+
+function settleUncalledExcess(room) {
+  const unmatched = uncalledExcess(room.players);
+  if (!unmatched) return null;
+  const player = room.players.find(item => item.id === unmatched.playerId);
+  if (!player) return null;
+  const amount = Math.min(unmatched.amount, player.roundBet, player.totalBet);
+  if (amount <= 0) return null;
+  player.roundBet -= amount;
+  player.totalBet -= amount;
+  player.stack += amount;
+  player.allIn = player.stack === 0;
+  room.pot -= amount;
+  room.currentBet = Math.max(0, ...room.players.filter(item => item.inHand).map(item => item.roundBet));
+  addLog(room, `${player.name} UNCALLED BET RETURN ${amount}`, 'system');
+  return { playerId: player.id, amount };
 }
 
 function scheduleShuffle(room) {
@@ -146,10 +165,11 @@ function startHand(room) {
   if (live.length < 2) return scheduleShuffle(room);
   room.handNumber += 1;
   room.phase = 'playing'; room.phaseEndsAt = 0; room.street = 'preflop'; room.result = null;
+  room.runoutFrom = null;
   room.pot = 0; room.currentBet = room.bb; room.minRaise = room.bb; room.board = []; room.deck = createDeck();
   room.handSB = room.sb; room.handBB = room.bb;
   room.players.forEach(player => Object.assign(player, {
-    inHand: inStartPool(player), hand: [], folded: !inStartPool(player), allIn: false,
+    inHand: inStartPool(player), hand: [], folded: !inStartPool(player), allIn: false, allInDeclared: false,
     acted: false, roundBet: 0, totalBet: 0
   }));
   room.dealerIndex = nextIndex(room, room.dealerIndex, player => player.inHand);
@@ -219,22 +239,28 @@ function performAction(room, playerId, action, raiseTarget = 0, auto = false) {
     addLog(room, `${player.name} ${auto ? 'AUTO FOLD' : 'FOLD'}`, player.id === room.hostId ? 'hero' : '');
   } else if (action === 'call') {
     paid = postChips(room, player, needed); player.acted = true;
-    addLog(room, needed ? `${player.name} CALL ${paid}` : `${player.name} CHECK`);
+    if (player.allIn) player.allInDeclared = true;
+    addLog(room, needed ? `${player.name} ${player.allIn ? 'ALL-IN CALL' : 'CALL'} ${paid}` : `${player.name} CHECK`);
   } else if (action === 'raise') {
     const maxTarget = player.roundBet + player.stack;
     const minimum = room.currentBet === 0 ? room.handBB : room.currentBet + room.minRaise;
-    const target = Math.min(maxTarget, Math.max(Math.min(minimum, maxTarget), Math.floor(Number(raiseTarget) || minimum)));
+    const requestedTarget = Math.min(maxTarget, Math.max(Math.min(minimum, maxTarget), Math.floor(Number(raiseTarget) || minimum)));
+    const declaredAllIn = requestedTarget >= maxTarget;
+    const target = contestableRaiseTarget(player, room.players, requestedTarget);
+    const cappedAmount = Math.max(0, requestedTarget - target);
     const oldBet = room.currentBet;
     paid = postChips(room, player, target - player.roundBet);
+    if (declaredAllIn) player.allInDeclared = true;
     if (player.roundBet > oldBet) {
       const increase = player.roundBet - oldBet;
-      if (increase >= room.minRaise || player.allIn) {
+      if (increase >= room.minRaise || player.allIn || declaredAllIn) {
         if (increase >= room.minRaise) room.minRaise = Math.max(room.handBB, increase);
         room.currentBet = player.roundBet;
         room.players.forEach(other => { if (canAct(other)) other.acted = false; });
       }
       player.acted = true;
-      addLog(room, `${player.name} ${player.allIn ? 'ALL-IN' : 'RAISE TO'} ${player.roundBet}`);
+      addLog(room, `${player.name} ${declaredAllIn || player.allIn ? 'ALL-IN TO' : 'RAISE TO'} ${player.roundBet}`);
+      if (cappedAmount) addLog(room, `${player.name} EFFECTIVE STACK MATCH · ${cappedAmount} NOT COMMITTED`, 'system');
     } else {
       player.acted = true;
       addLog(room, `${player.name} ALL-IN ${paid}`);
@@ -245,7 +271,48 @@ function performAction(room, playerId, action, raiseTarget = 0, auto = false) {
   continueGame(room);
 }
 
+function startAllInRunout(room, refund = null) {
+  room.runoutFrom = room.street;
+  room.phase = 'runout';
+  room.actionIndex = -1;
+  room.turnEndsAt = 0;
+  room.phaseEndsAt = Date.now() + 1300;
+  room.currentBet = 0;
+  room.minRaise = room.handBB;
+  room.players.forEach(player => { player.roundBet = 0; player.acted = true; });
+  addLog(room, `ALL-IN RUNOUT · ${room.street.toUpperCase()}부터 공개`, 'system');
+  broadcast(room);
+  if (refund) broadcastEvent(room, { event: 'chipsReturn', playerId: refund.playerId, amount: refund.amount, label: 'UNCALLED RETURN' });
+}
+
+function advanceAllInRunout(room) {
+  if (room.phase !== 'runout') return;
+  if (room.board.length < 3) {
+    room.deck.pop();
+    room.board.push(room.deck.pop(), room.deck.pop(), room.deck.pop());
+    room.street = 'flop';
+    addLog(room, `FLOP · ${room.board.map(cardName).join(' ')}`, 'system');
+  } else if (room.board.length < 4) {
+    room.deck.pop();
+    room.board.push(room.deck.pop());
+    room.street = 'turn';
+    addLog(room, `TURN · ${cardName(room.board[3])}`, 'system');
+  } else if (room.board.length < 5) {
+    room.deck.pop();
+    room.board.push(room.deck.pop());
+    room.street = 'river';
+    addLog(room, `RIVER · ${cardName(room.board[4])}`, 'system');
+  } else {
+    return showdown(room);
+  }
+  room.phaseEndsAt = Date.now() + 1800;
+  broadcast(room);
+}
+
 function advanceStreet(room) {
+  const refund = settleUncalledExcess(room);
+  const live = contenders(room);
+  if (live.length > 1 && live.filter(canAct).length <= 1) return startAllInRunout(room, refund);
   room.players.forEach(player => { player.roundBet = 0; player.acted = false; });
   room.currentBet = 0; room.minRaise = room.handBB;
   if (room.street === 'preflop') {
@@ -255,9 +322,10 @@ function advanceStreet(room) {
     room.deck.pop(); room.board.push(room.deck.pop()); room.street = 'turn'; addLog(room, `TURN · ${cardName(room.board[3])}`, 'system');
   } else if (room.street === 'turn') {
     room.deck.pop(); room.board.push(room.deck.pop()); room.street = 'river'; addLog(room, `RIVER · ${cardName(room.board[4])}`, 'system');
-  } else return showdown(room);
+  } else return showdown(room, refund);
   room.actionIndex = room.dealerIndex;
   broadcast(room);
+  if (refund) broadcastEvent(room, { event: 'chipsReturn', playerId: refund.playerId, amount: refund.amount, label: 'UNCALLED RETURN' });
   continueGame(room);
 }
 
@@ -295,49 +363,79 @@ function compareScores(a, b) {
 function evaluateSeven(cards) { return combinations(cards, 5).map(evaluateFive).sort((a, b) => compareScores(b.score, a.score))[0]; }
 
 function finishByFold(room, winner) {
+  const refund = settleUncalledExcess(room);
   const prize = room.pot;
   winner.stack += prize;
-  room.phase = 'result'; room.street = 'fold-win'; room.actionIndex = -1; room.phaseEndsAt = Date.now() + 3000;
+  room.phase = 'result'; room.street = 'fold-win'; room.actionIndex = -1; room.phaseEndsAt = Date.now() + 3800;
   room.resultSeq += 1;
-  room.result = { seq: room.resultSeq, winners: [{ id: winner.id, name: winner.name, amount: prize, hand: '상대 전원 폴드' }] };
+  const award = { id: winner.id, name: winner.name, amount: prize, hand: '상대 전원 폴드' };
+  room.result = {
+    seq: room.resultSeq,
+    winners: [award],
+    pots: [{ index: 0, type: 'main', label: 'MAIN POT', amount: prize, winners: [award] }]
+  };
   addLog(room, `${winner.name} 승리 · +${prize}`, 'win');
   broadcast(room);
-  broadcastEvent(room, { event: 'chipsIn', playerId: winner.id, amount: prize });
+  if (refund) broadcastEvent(room, { event: 'chipsReturn', playerId: refund.playerId, amount: refund.amount, label: 'UNCALLED RETURN' });
+  const resultSeq = room.resultSeq;
+  setTimeout(() => {
+    if (room.phase === 'result' && room.result?.seq === resultSeq) {
+      broadcastEvent(room, { event: 'potAward', playerId: winner.id, amount: prize, potIndex: 0, potType: 'main', label: 'MAIN POT' });
+    }
+  }, refund ? 700 : 250);
 }
 
-function showdown(room) {
-  room.street = 'showdown'; room.phase = 'result'; room.actionIndex = -1; room.phaseEndsAt = Date.now() + 3000;
+function showdown(room, pendingRefund = null) {
+  const refund = pendingRefund || settleUncalledExcess(room);
+  room.street = 'showdown'; room.phase = 'result'; room.actionIndex = -1;
   const live = contenders(room).map(player => ({ player, hand: evaluateSeven([...player.hand, ...room.board]) }));
   const winnings = new Map();
-  const levels = [...new Set(room.players.filter(player => player.inHand && player.totalBet > 0).map(player => player.totalBet))].sort((a, b) => a - b);
-  let previous = 0;
-  levels.forEach(level => {
-    const contributors = room.players.filter(player => player.inHand && player.totalBet >= level);
-    const sidePot = (level - previous) * contributors.length;
-    const eligible = live.filter(item => item.player.totalBet >= level);
+  const resultPots = buildPotLayers(room.players).map(pot => {
+    const eligible = live.filter(item => pot.eligibleIds.includes(item.player.id));
     eligible.sort((a, b) => compareScores(b.hand.score, a.hand.score));
     const winners = eligible.filter(item => compareScores(item.hand.score, eligible[0].hand.score) === 0);
-    const share = Math.floor(sidePot / winners.length);
-    let remainder = sidePot - share * winners.length;
-    winners.forEach(({ player }) => { winnings.set(player.id, (winnings.get(player.id) || 0) + share + (remainder-- > 0 ? 1 : 0)); });
-    previous = level;
+    const share = Math.floor(pot.amount / winners.length);
+    let remainder = pot.amount - share * winners.length;
+    const awards = winners.map(({ player, hand }) => {
+      const amount = share + (remainder-- > 0 ? 1 : 0);
+      winnings.set(player.id, (winnings.get(player.id) || 0) + amount);
+      return { id: player.id, name: player.name, amount, hand: hand.name };
+    });
+    return { ...pot, winners: awards };
   });
   const resultWinners = [...winnings.entries()].map(([id, amount]) => {
     const item = live.find(entry => entry.player.id === id);
     item.player.stack += amount;
     return { id, name: item.player.name, amount, hand: item.hand.name };
-  });
+  }).sort((left, right) => right.amount - left.amount);
   live.forEach(({ player, hand }) => addLog(room, `${player.name} · ${hand.name}`));
-  resultWinners.forEach(winner => addLog(room, `${winner.name} 승리 · +${winner.amount}`, 'win'));
-  room.resultSeq += 1; room.result = { seq: room.resultSeq, winners: resultWinners };
+  resultPots.forEach(pot => pot.winners.forEach(winner => addLog(room, `${pot.label} · ${winner.name} +${winner.amount}`, 'win')));
+  room.resultSeq += 1; room.result = { seq: room.resultSeq, winners: resultWinners, pots: resultPots };
+  const resultSeq = room.resultSeq;
+  let payoutDelay = refund ? 850 : 300;
+  resultPots.forEach(pot => {
+    pot.winners.forEach(winner => {
+      setTimeout(() => {
+        if (room.phase === 'result' && room.result?.seq === resultSeq) {
+          broadcastEvent(room, {
+            event: 'potAward', playerId: winner.id, amount: winner.amount,
+            potIndex: pot.index, potType: pot.type, potAmount: pot.amount, label: pot.label
+          });
+        }
+      }, payoutDelay);
+      payoutDelay += 220;
+    });
+    payoutDelay += 650;
+  });
+  room.phaseEndsAt = Date.now() + Math.max(3800, payoutDelay + 700);
   broadcast(room);
-  resultWinners.forEach((winner, index) => setTimeout(() => broadcastEvent(room, { event: 'chipsIn', playerId: winner.id, amount: winner.amount }), index * 180));
+  if (refund) broadcastEvent(room, { event: 'chipsReturn', playerId: refund.playerId, amount: refund.amount, label: 'UNCALLED RETURN' });
 }
 
 function makePlayer(id, name, room, isBot = false) {
   return {
     id, name: cleanName(name), stack: startingStack(room), connected: true, isBot,
-    inHand: false, hand: [], folded: false, allIn: false, acted: false, roundBet: 0, totalBet: 0
+    inHand: false, hand: [], folded: false, allIn: false, allInDeclared: false, acted: false, roundBet: 0, totalBet: 0
   };
 }
 
@@ -368,7 +466,8 @@ function resetHandState(room, phase = 'lobby') {
   room.deck = []; room.board = []; room.dealerIndex = -1; room.sbIndex = -1; room.bbIndex = -1; room.actionIndex = -1;
   room.street = 'waiting'; room.phase = phase; room.phaseEndsAt = 0; room.turnEndsAt = 0;
   room.pot = 0; room.currentBet = 0; room.minRaise = BLIND_LEVELS[0][1]; room.result = null;
-  room.players.forEach(player => Object.assign(player, { inHand: false, hand: [], folded: false, allIn: false, acted: false, roundBet: 0, totalBet: 0 }));
+  room.runoutFrom = null;
+  room.players.forEach(player => Object.assign(player, { inHand: false, hand: [], folded: false, allIn: false, allInDeclared: false, acted: false, roundBet: 0, totalBet: 0 }));
 }
 
 function startSession(room) {
@@ -510,6 +609,7 @@ setInterval(() => {
       if (room.mode === 'tournament' && room.players.filter(inStartPool).length <= 1) finishTournament(room);
       else scheduleShuffle(room);
     }
+    else if (room.phase === 'runout' && now >= room.phaseEndsAt) advanceAllInRunout(room);
     else if (room.phase === 'shuffling' && now >= room.phaseEndsAt) startHand(room);
   });
 }, 250);

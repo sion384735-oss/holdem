@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "check": "node --check server.js && node --check app.js"
+    "check": "node --check server.js && node --check app.js && node --check poker-rules.js",
+    "test:rules": "node tests/poker-rules.test.js",
+    "test:allin": "node tests/all-in-smoke.js"
   },
   "dependencies": {
     "ws": "^8.21.3"
