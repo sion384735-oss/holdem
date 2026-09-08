@@ -79,6 +79,14 @@ main { width: 100%; max-width: 1500px; margin: 0 auto; padding: 26px 34px 30px; 
 .board .card.deal-card:nth-child(2) { animation-delay: .1s; }
 .board .card.deal-card:nth-child(3) { animation-delay: .2s; }
 @keyframes board-deal { from { transform: translateY(-22px) rotateY(85deg) scale(.86); opacity: 0; } to { transform: translateY(0) rotateY(0) scale(1); opacity: 1; } }
+.table-blind-clock { position: absolute; z-index: 4; top: 63%; left: 50%; display: flex; min-width: 232px; transform: translateX(-50%); align-items: center; justify-content: center; gap: 15px; padding: 8px 14px; border: 1px solid #68827a88; border-radius: 22px; background: #0a1d1ad9; box-shadow: 0 7px 18px #0008, inset 0 1px #ffffff0c; backdrop-filter: blur(5px); white-space: nowrap; }
+.table-blind-clock > div { display: grid; gap: 3px; text-align: center; }
+.table-blind-clock small { color: #8fa69f; font: 700 7px ui-monospace, monospace; letter-spacing: .12em; }
+.table-blind-clock strong, .table-blind-clock time { color: #f3f7f0; font: 900 12px ui-monospace, monospace; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.table-blind-clock time { color: var(--lime); }
+.table-blind-divider { width: 1px; height: 27px; background: #5c736c66; }
+.table-blind-clock.pending { border-color: #d9f77d99; box-shadow: 0 7px 18px #0008, 0 0 18px #d9f77d20; }
+.table-blind-clock.pending #table-blind-timer-label { color: var(--lime); }
 .dealer { position: absolute; z-index: 5; width: 25px; height: 25px; border: 2px solid #ccd5c8; border-radius: 50%; background: #e8eee1; color: #1d2e28; font: 800 10px ui-monospace, monospace; line-height: 21px; text-align: center; }
 
 .seat { position: absolute; z-index: 6; width: 145px; transform: translate(-50%, -50%); }
@@ -359,6 +367,8 @@ dd select { border: 1px solid #3a4b48; border-radius: 3px; outline: 0; backgroun
   .player-info small { font-size: 8px; }
   .card { width: 36px; height: 51px; font-size: 14px; }
   .card .suit { font-size: 12px; }
+  .table-blind-clock { top: 63%; min-width: 208px; gap: 11px; padding: 7px 11px; }
+  .table-blind-clock strong, .table-blind-clock time { font-size: 10px; }
   .action-console { grid-template-columns: 1fr; }
   .turn-status { grid-template-columns: 27px 1fr auto; }
   .turn-status time { grid-column: 3; grid-row: 1 / span 2; }

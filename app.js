@@ -267,6 +267,32 @@ function updateCardCountdown() {
   timer.style.setProperty('--turn-progress', `${Math.min(360, seconds * 6)}deg`);
 }
 
+function updateTableBlindClock() {
+  if (!snapshot) return;
+  const { game, room } = snapshot;
+  const clock = $('#table-blind-clock');
+  clock.classList.remove('hidden');
+  clock.classList.toggle('pending', Boolean(game.blindChangePending));
+  $('#table-current-blinds').textContent = `${formatChips(game.sb)} / ${formatChips(game.bb)}`;
+
+  if (room.mode === 'cash') {
+    $('#table-blind-timer-label').textContent = 'CASH GAME';
+    $('#table-blind-timer').textContent = 'FIXED';
+    return;
+  }
+
+  if (!room.started) {
+    $('#table-blind-timer-label').textContent = 'BLIND UP';
+    $('#table-blind-timer').textContent = `${String(room.blindUpMinutes).padStart(2, '0')}:00`;
+    return;
+  }
+
+  $('#table-blind-timer-label').textContent = game.blindChangePending
+    ? `NEXT ${formatChips(game.nextSB)} / ${formatChips(game.nextBB)}`
+    : game.atMaxBlindLevel ? 'FINAL LEVEL' : 'BLIND UP';
+  $('#table-blind-timer').textContent = game.atMaxBlindLevel ? 'MAX' : formatClock(game.levelEndsAt - Date.now());
+}
+
 function renderBoard() {
   const board = snapshot?.game.board || [];
   const handNumber = snapshot?.game.handNumber;
@@ -478,7 +504,7 @@ function render() {
   if (!snapshot) return renderEmptyTable();
   const { game, room } = snapshot;
   const isHost = room.hostId === snapshot.you;
-  renderBoard(); renderSeats(); renderActions(); renderOverlay(); renderLogs(); renderHandReview();
+  renderBoard(); renderSeats(); renderActions(); renderOverlay(); renderLogs(); renderHandReview(); updateTableBlindClock();
   const playType = room.playType === 'com' ? 'VS COM' : '실시간 배틀';
   const gameMode = room.mode === 'cash' ? '캐시게임' : '토너먼트';
   const connected = game.players.filter(player => player.connected).length;
@@ -568,6 +594,7 @@ function renderEmptyTable() {
   $('#action-timer').textContent = '--:--';
   $('#end-game-btn').classList.add('hidden');
   $('#gto-card').classList.add('hidden');
+  $('#table-blind-clock').classList.add('hidden');
   $('#lock-label').textContent = '설정 대기';
   $('#hand-log').innerHTML = '<div class="empty-panel">게임에 들어가면 기록이 표시됩니다.</div>';
   selectedReviewHandNumber = null;
@@ -659,6 +686,7 @@ setInterval(() => {
   if (room.mode === 'tournament' && room.started) {
     $('#level-timer').textContent = game.atMaxBlindLevel ? 'MAX' : formatClock(game.levelEndsAt - Date.now());
   }
+  updateTableBlindClock();
   updateCardCountdown();
 }, 250);
 
