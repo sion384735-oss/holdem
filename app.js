@@ -244,7 +244,10 @@ function renderSeats() {
     const isHero = player.id === snapshot.you;
     const cards = player.inHand ? (player.hand ? player.hand.map(card => cardHTML(card)).join('') : `${cardHTML(null, true)}${cardHTML(null, true)}`) : '';
     const position = seatPosition(index, players.length);
-    const classes = [player.folded ? 'folded' : '', player.allIn ? 'all-in' : '', !player.connected ? 'disconnected' : '', game.turnPlayerId === player.id ? 'active' : '', position.top < 50 ? 'top-seat' : '', winnerIds.has(player.id) ? 'winner' : ''].filter(Boolean).join(' ');
+    const sideCards = Math.abs(position.left - 50) > 32 && Math.abs(position.top - 50) < 20
+      ? (position.left < 50 ? 'side-cards-right' : 'side-cards-left')
+      : '';
+    const classes = [player.folded ? 'folded' : '', player.allIn ? 'all-in' : '', !player.connected ? 'disconnected' : '', game.turnPlayerId === player.id ? 'active' : '', position.top < 50 ? 'top-seat' : '', sideCards, winnerIds.has(player.id) ? 'winner' : ''].filter(Boolean).join(' ');
     const blind = game.sbId === player.id ? 'SB' : game.bbId === player.id ? 'BB' : '';
     const status = !player.connected ? 'DISCONNECTED' : player.stack <= 0 && !player.inHand ? 'TABLE OUT' : `${formatChips(player.stack)} <i>/</i> ${formatBB(player.stack)}`;
     const name = escapeHTML(player.name);

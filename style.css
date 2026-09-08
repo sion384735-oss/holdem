@@ -123,6 +123,8 @@ main { width: 100%; max-width: 1500px; margin: 0 auto; padding: 26px 34px 30px; 
 .seat.all-in .player-box { border-color: #e95b53; box-shadow: 0 0 0 2px #e95b5328, 0 0 20px #b72f2a45; }
 @keyframes all-in-pulse { to { transform: translateX(-50%) scale(1.08); box-shadow: 0 0 22px #ff5d52dd; } }
 .seat.top-seat .hole-cards { top: 54px; }
+.seat.side-cards-right .hole-cards { top: 50%; left: calc(100% + 9px); transform: translateY(-50%); }
+.seat.side-cards-left .hole-cards { top: 50%; right: calc(100% + 9px); left: auto; transform: translateY(-50%); }
 .seat.winner .player-box { border-color: var(--lime); box-shadow: 0 0 0 3px #d9f77d2b, 0 0 28px #d9f77d55; animation: winner-pulse .8s ease-in-out infinite alternate; }
 @keyframes winner-pulse { to { box-shadow: 0 0 0 5px #d9f77d17, 0 0 38px #d9f77d70; } }
 .player-info small i { margin: 0 2px; color: #697a76; font-style: normal; }
