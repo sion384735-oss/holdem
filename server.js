@@ -8,6 +8,7 @@ const { EquityGtoBotEngine } = require('./gto-bot');
 const { contestableRaiseTarget, uncalledExcess, buildPotLayers } = require('./poker-rules');
 const { advanceTournamentClock, tournamentBlindLevel } = require('./tournament-clock');
 const { describeCurrentHand } = require('./hand-strength');
+const { shuffleSeatOrder } = require('./seat-order');
 
 const PORT = Number(process.env.PORT || 5050);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -626,6 +627,7 @@ function resetHandState(room, phase = 'lobby') {
 function startSession(room) {
   const readyPlayers = room.players.filter(player => player.connected);
   if (readyPlayers.length < 2) return false;
+  room.players = shuffleSeatOrder(readyPlayers);
   room.started = true; room.settingsLocked = true; room.logs = []; room.level = 0; room.handLevel = 0;
   room.botDecisionStats = { solver: 0, equity: 0 };
   room.lastHandReview = null; room.handHistory = [];
@@ -634,6 +636,7 @@ function startSession(room) {
   room.players.forEach(player => { if (player.connected) player.stack = room.startingChips; });
   resetHandState(room, 'lobby');
   addLog(room, `게임 시작 · ${room.mode === 'cash' ? '캐시게임' : '토너먼트'} · 시작 칩 ${room.startingChips}`, 'system');
+  addLog(room, '참가자와 COM 좌석을 랜덤으로 배치했습니다.', 'system');
   scheduleShuffle(room);
   return true;
 }

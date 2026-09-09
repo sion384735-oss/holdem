@@ -129,8 +129,14 @@ async function testRealtimeRoomWithBots() {
 
   host.send({ type: 'startGame' });
   const playing = await host.waitFor(message => message.type === 'state' && message.room.settingsLocked && message.game.phase === 'playing');
+  const guestPlaying = await guest.waitFor(message => message.type === 'state' && message.room.settingsLocked && message.game.phase === 'playing');
   assert.equal(playing.game.players.filter(player => player.isBot && player.inHand).length, 2);
   assert.equal(playing.game.players.filter(player => player.isBot).every(player => player.hand === null), true);
+  assert.deepEqual(
+    guestPlaying.game.players.map(player => player.id),
+    playing.game.players.map(player => player.id),
+    '사람과 COM을 섞은 원형 좌석 순서가 모든 접속자에게 동일해야 합니다.'
+  );
 
   host.close();
   guest.close();
