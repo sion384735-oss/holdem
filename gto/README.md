@@ -1,8 +1,8 @@
 # TexasSolver GTO 정책 파이프라인
 
-이 프로젝트의 COM은 `gto/policies/*.json` 중 현재 보드·SPR·인원·액션 기록이 정확히 맞는 정책을 찾으면 TexasSolver가 계산한 혼합 확률대로 행동합니다. 정확한 정책이 없는 상황은 단순 랜덤 로직 대신 Monte Carlo equity, 팟 오즈, SPR, 포지션, 상대 수, 베팅 압력, 이전 스트리트 공격권, 페어 등급, 드로와 블로커를 계산하는 `equity-gto-v3` 혼합 전략 엔진으로 처리합니다.
+이 프로젝트의 COM은 `gto/policies/*.json` 중 현재 보드·SPR·인원·액션 기록이 정확히 맞는 정책을 찾으면 TexasSolver가 계산한 혼합 확률대로 행동합니다. 정확한 정책이 없는 상황은 단순 랜덤 로직 대신 포지션별 RFI, 림퍼 대응, 오픈 레이즈 방어, 3벳·4벳, 올인과 유효 스택별 프리플랍 레인지에 Monte Carlo equity, 팟 오즈, SPR, 베팅 압력, 이전 스트리트 공격권, 페어 등급, 드로와 블로커를 결합하는 `equity-gto-v4` 혼합 전략 엔진으로 처리합니다.
 
-현재 포함된 `texassolver-proof-qs8d7h.json`은 공식 콘솔 샘플을 직접 계산해 가져온 end-to-end 검증 정책입니다. 범위는 헤즈업, `Qs 8d 7h`, pot 4, effective stack 10, IP `T9s`, OOP `JTs,43s`이며 solver 정확도 목표는 0.5%입니다. 즉 전체 홀덤을 커버하는 데이터베이스가 아니라 실제 solver 확률이 게임까지 전달되는 첫 검증 스팟입니다. `equity-gto-v3`는 이 빈 범위를 합리적으로 처리하지만 TexasSolver의 정확한 해와 동일하다고 주장하지 않습니다.
+현재 포함된 `texassolver-proof-qs8d7h.json`은 공식 콘솔 샘플을 직접 계산해 가져온 end-to-end 검증 정책입니다. 범위는 헤즈업, `Qs 8d 7h`, pot 4, effective stack 10, IP `T9s`, OOP `JTs,43s`이며 solver 정확도 목표는 0.5%입니다. 즉 전체 홀덤을 커버하는 데이터베이스가 아니라 실제 solver 확률이 게임까지 전달되는 첫 검증 스팟입니다. `equity-gto-v4`는 이 빈 범위를 합리적으로 처리하지만 TexasSolver의 정확한 해와 동일하다고 주장하지 않습니다.
 
 ## 다시 계산하기 (macOS)
 

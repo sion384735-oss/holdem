@@ -1,11 +1,72 @@
 const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+const PREFLOP_RANKS = 'AKQJT98765432';
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, Number(value) || 0));
 }
 
 function cardKey(card) { return `${card.rank}${card.suit}`; }
+
+function preflopHandProfile(hand = []) {
+  if (!Array.isArray(hand) || hand.length !== 2 || hand.some(card => !card || !RANKS.includes(card.rank) || !SUITS.includes(card.suit))) return null;
+  if (cardKey(hand[0]) === cardKey(hand[1])) return null;
+  const [high, low] = [...hand].sort((left, right) => right.rank - left.rank);
+  const highSymbol = PREFLOP_RANKS[14 - high.rank];
+  const lowSymbol = PREFLOP_RANKS[14 - low.rank];
+  const pair = high.rank === low.rank;
+  const suited = !pair && high.suit === low.suit;
+  return {
+    high: high.rank,
+    low: low.rank,
+    pair,
+    suited,
+    gap: pair ? 0 : high.rank - low.rank - 1,
+    combo: pair ? `${highSymbol}${lowSymbol}` : `${highSymbol}${lowSymbol}${suited ? 's' : 'o'}`
+  };
+}
+
+function expandRangeToken(token) {
+  if (token.length === 3 && token[0] === token[1] && token[2] === '+') {
+    const start = PREFLOP_RANKS.indexOf(token[0]);
+    return PREFLOP_RANKS.slice(0, start + 1).split('').map(rank => `${rank}${rank}`);
+  }
+  const plus = token.match(/^([AKQJT98765432])([AKQJT98765432])([so])\+$/);
+  if (plus) {
+    const highIndex = PREFLOP_RANKS.indexOf(plus[1]);
+    const lowIndex = PREFLOP_RANKS.indexOf(plus[2]);
+    if (highIndex < 0 || lowIndex <= highIndex) return [];
+    return PREFLOP_RANKS.slice(highIndex + 1, lowIndex + 1).split('').map(low => `${plus[1]}${low}${plus[3]}`);
+  }
+  return [token];
+}
+
+function makeRange(specification) {
+  return new Set(String(specification).trim().split(/\s+/).flatMap(expandRangeToken));
+}
+
+const OPEN_RANGES = {
+  UTG: makeRange('66+ AJs+ KQs AQo+ ATs KJs QJs JTs T9s 98s A5s A4s'),
+  MP: makeRange('55+ ATs+ KJs+ QJs AJo+ KQo JTs T9s 98s 87s A5s A4s A3s'),
+  HJ: makeRange('44+ A9s+ KTs+ QTs+ JTs ATo+ KJo+ QJo T9s 98s 87s 76s A5s A4s A3s A2s'),
+  CO: makeRange('22+ A2s+ K8s+ Q9s+ J9s+ T8s+ A8o+ KTo+ QTo+ JTo 98s 97s 87s 86s 76s 65s 54s'),
+  BTN: makeRange('22+ A2s+ K4s+ Q6s+ J7s+ T7s+ 97s+ 86s+ 75s+ 64s+ 54s A2o+ K8o+ Q9o+ J9o+ T9o'),
+  SB: makeRange('22+ A2s+ K6s+ Q7s+ J8s+ T8s+ 97s+ 86s+ 75s+ 65s 54s A5o+ K9o+ Q9o+ JTo'),
+  BB: makeRange('22+ A2s+ K2s+ Q5s+ J7s+ T7s+ 96s+ 86s+ 75s+ 64s+ 54s A2o+ K7o+ Q8o+ J8o+ T8o+ 98o 87o')
+};
+const PREMIUM_RANGE = makeRange('QQ+ AKs AKo');
+const THREE_BET_MIX = makeRange('JJ AQs A5s A4s KQs');
+const CALL_OPEN_RANGE = makeRange('22+ ATs+ KJs+ QJs JTs T9s 98s 87s A5s A4s AQo AJo KQo');
+const CALL_OPEN_TIGHT = makeRange('77+ AJs+ KQs AQo+');
+const CALL_OPEN_BIG_BLIND = makeRange('22+ A2s+ K9s+ Q9s+ J9s+ T8s+ 97s+ 86s+ 75s+ 65s ATo+ KJo+ QJo JTo T9o 98o 87o');
+const OVERLIMP_RANGE = makeRange('22+ A2s+ KTs+ QTs+ JTs T9s 98s 87s 76s 65s 54s ATo+ KQo');
+const CONTINUE_VS_THREE_BET = makeRange('JJ+ AQs+ AKo');
+const SHOVE_CALL_DEEP = makeRange('QQ+ AKs AKo');
+const SHOVE_CALL_MEDIUM = makeRange('JJ+ AQs+ AKo');
+const SHOVE_CALL_SHORT = makeRange('88+ AQs+ AQo+ KQs');
+const SHOVE_CALL_VERY_SHORT = makeRange('55+ AJs+ AQo+ KQs');
+
+function inRange(range, profile) { return Boolean(profile && range?.has(profile.combo)); }
 
 function makeDeck(excluded = []) {
   const blocked = new Set(excluded.map(cardKey));
@@ -272,6 +333,103 @@ function decideUnopenedPreflop(context, equity, random) {
   return { action: 'fold' };
 }
 
+function decidePreflopRange(context, equity, random = Math.random) {
+  const profile = preflopHandProfile(context.hand);
+  if (!profile) return null;
+  const position = OPEN_RANGES[context.position] ? context.position : (context.inPosition ? 'BTN' : 'MP');
+  const raiseCount = Math.max(0, Math.floor(Number(context.preflopRaiseCount) || 0));
+  const limperCount = Math.max(0, Math.floor(Number(context.limperCount) || 0));
+  const raiseSizeBB = context.currentBet / Math.max(1, context.bb);
+  const effectiveStackBB = Math.max(1, Number(context.effectiveStackBB) || ((context.playerRoundBet + context.playerStack) / Math.max(1, context.bb)));
+  const needed = Math.max(0, context.needed);
+
+  if (context.facingAllIn || needed >= context.playerStack) {
+    const callRange = effectiveStackBB <= 12
+      ? SHOVE_CALL_VERY_SHORT
+      : effectiveStackBB <= 20 ? SHOVE_CALL_SHORT
+        : effectiveStackBB <= 40 ? SHOVE_CALL_MEDIUM : SHOVE_CALL_DEEP;
+    const pricedIn = needed / Math.max(1, context.pot + needed) <= 0.14;
+    const allowed = inRange(callRange, profile) || (pricedIn && inRange(CALL_OPEN_TIGHT, profile));
+    const callFrequency = inRange(PREMIUM_RANGE, profile) ? 1 : effectiveStackBB <= 12 ? 0.9 : 0.78;
+    return {
+      action: allowed && random() < callFrequency ? 'call' : 'fold',
+      reason: `preflop-${effectiveStackBB <= 12 ? 'short' : 'deep'}-shove-range`,
+      combo: profile.combo,
+      position
+    };
+  }
+
+  if (context.currentBet <= context.bb && raiseCount === 0) {
+    if (position === 'BB' && needed === 0 && limperCount === 0) {
+      return { action: 'call', reason: 'preflop-big-blind-check', combo: profile.combo, position };
+    }
+
+    const openRange = OPEN_RANGES[position];
+    if (limperCount === 0) {
+      if (!inRange(openRange, profile)) {
+        return { action: needed === 0 ? 'call' : 'fold', reason: 'preflop-outside-rfi-range', combo: profile.combo, position };
+      }
+      const frequency = inRange(PREMIUM_RANGE, profile) ? 0.99 : profile.pair && profile.high >= 9 ? 0.93 : 0.82;
+      return random() < frequency
+        ? { ...raiseDecision(context, equity), reason: 'preflop-position-open', combo: profile.combo, position }
+        : { action: needed === 0 ? 'call' : 'fold', reason: 'preflop-mixed-open-fold', combo: profile.combo, position };
+    }
+
+    const tighterPosition = { BTN: 'CO', SB: 'HJ', CO: 'HJ', HJ: 'MP', MP: 'UTG', UTG: 'UTG', BB: 'CO' }[position] || 'UTG';
+    const isolationRange = OPEN_RANGES[tighterPosition];
+    if (inRange(PREMIUM_RANGE, profile) || (inRange(isolationRange, profile) && random() < 0.78)) {
+      return { ...raiseDecision(context, equity), reason: 'preflop-isolation-raise', combo: profile.combo, position };
+    }
+    const canOverlimp = effectiveStackBB >= 15 && inRange(OVERLIMP_RANGE, profile);
+    if (canOverlimp && random() < (position === 'SB' ? 0.62 : 0.78)) {
+      return { action: 'call', reason: 'preflop-overlimp-range', combo: profile.combo, position };
+    }
+    return { action: position === 'BB' && needed === 0 ? 'call' : 'fold', reason: 'preflop-outside-limp-range', combo: profile.combo, position };
+  }
+
+  if (raiseCount >= 2) {
+    if (inRange(PREMIUM_RANGE, profile)) {
+      return random() < 0.78
+        ? { ...raiseDecision(context, equity), reason: 'preflop-four-bet-value', combo: profile.combo, position }
+        : { action: 'call', reason: 'preflop-premium-trap', combo: profile.combo, position };
+    }
+    const continueFrequency = profile.combo === 'JJ' ? 0.5 : profile.combo === 'AQs' ? 0.42 : 0;
+    return {
+      action: inRange(CONTINUE_VS_THREE_BET, profile) && random() < continueFrequency ? 'call' : 'fold',
+      reason: 'preflop-three-bet-defense-range',
+      combo: profile.combo,
+      position
+    };
+  }
+
+  if (inRange(PREMIUM_RANGE, profile)) {
+    return random() < 0.86
+      ? { ...raiseDecision(context, equity), reason: 'preflop-three-bet-value', combo: profile.combo, position }
+      : { action: 'call', reason: 'preflop-premium-flat', combo: profile.combo, position };
+  }
+  if (inRange(THREE_BET_MIX, profile) && ['HJ', 'CO', 'BTN', 'SB', 'BB'].includes(position) && random() < 0.24) {
+    return { ...raiseDecision(context, equity, true), reason: 'preflop-mixed-three-bet', combo: profile.combo, position };
+  }
+
+  const callRange = raiseSizeBB > 4.25
+    ? CALL_OPEN_TIGHT
+    : position === 'BB' ? CALL_OPEN_BIG_BLIND : CALL_OPEN_RANGE;
+  if (!inRange(callRange, profile)) {
+    return { action: 'fold', reason: 'preflop-outside-defense-range', combo: profile.combo, position };
+  }
+  const speculative = (profile.pair && profile.high <= 8) || (profile.suited && profile.gap <= 1 && profile.high <= 10);
+  if (speculative && (effectiveStackBB < 20 || raiseSizeBB > 3.75)) {
+    return { action: 'fold', reason: 'preflop-insufficient-implied-odds', combo: profile.combo, position };
+  }
+  const callFrequency = position === 'BB' ? 0.9 : raiseSizeBB <= 3 ? 0.8 : 0.62;
+  return {
+    action: random() < callFrequency ? 'call' : 'fold',
+    reason: 'preflop-position-defense',
+    combo: profile.combo,
+    position
+  };
+}
+
 function decisionFromEquity(context, rawEquity, random = Math.random) {
   const equity = clamp(rawEquity, 0, 1);
   const profile = context.street === 'preflop' ? analyzePostflopHand() : analyzePostflopHand(context.hand, context.board);
@@ -297,6 +455,13 @@ function decisionFromEquity(context, rawEquity, random = Math.random) {
   const riskPremium = (context.mode === 'tournament' ? 0.018 : 0.008) + (context.opponentCount > 1 ? 0.008 : 0);
   const requiredEquity = potOdds + riskPremium;
   const edge = adjustedEquity - requiredEquity;
+
+  if (context.street === 'preflop') {
+    const rangeDecision = decidePreflopRange(context, equity, random);
+    if (rangeDecision) {
+      return { ...rangeDecision, equity, adjustedEquity, potOdds, requiredEquity, edge };
+    }
+  }
 
   if (context.street === 'preflop' && context.currentBet <= context.bb) {
     const decision = decideUnopenedPreflop(context, equity, random);
@@ -399,10 +564,13 @@ class EquityGtoBotEngine {
     const decision = decisionFromEquity(context, equity, random);
     this.metrics.decisions += 1;
     this.metrics[`${decision.action}s`] += 1;
-    return { ...decision, source: 'equity-gto-v3', approximate: true };
+    return { ...decision, source: 'equity-gto-v4', approximate: true };
   }
 
-  status() { return { version: 'equity-gto-v3', iterations: this.iterations, ...this.metrics }; }
+  status() { return { version: 'equity-gto-v4', iterations: this.iterations, ...this.metrics }; }
 }
 
-module.exports = { EquityGtoBotEngine, estimateEquity, decisionFromEquity, analyzePostflopHand, evaluateSeven, compareScores };
+module.exports = {
+  EquityGtoBotEngine, estimateEquity, decisionFromEquity, preflopHandProfile, decidePreflopRange,
+  analyzePostflopHand, evaluateSeven, compareScores
+};

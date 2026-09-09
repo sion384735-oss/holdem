@@ -1,5 +1,8 @@
 const assert = require('assert');
-const { EquityGtoBotEngine, estimateEquity, decisionFromEquity, analyzePostflopHand, evaluateSeven, compareScores } = require('../gto-bot');
+const {
+  EquityGtoBotEngine, estimateEquity, decisionFromEquity, preflopHandProfile,
+  analyzePostflopHand, evaluateSeven, compareScores
+} = require('../gto-bot');
 
 function seededRandom(initialSeed) {
   let seed = initialSeed >>> 0;
@@ -50,6 +53,35 @@ for (let sample = 0; sample < 1000; sample += 1) {
 }
 assert.ok(weakCalls < 40, `약한 패의 풀스택 올인 콜 빈도가 너무 높습니다: ${weakCalls}/1000`);
 assert.ok(strongCalls > 950, `강한 패의 풀스택 올인 콜 빈도가 너무 낮습니다: ${strongCalls}/1000`);
+
+const preflopContext = {
+  street: 'preflop', mode: 'cash', board: [], pot: 300, needed: 200,
+  currentBet: 200, minRaise: 200, bb: 200, playerRoundBet: 0,
+  playerStack: 10000, opponentCount: 5, position: 'UTG', inPosition: false,
+  preflopRaiseCount: 0, limperCount: 0, effectiveStackBB: 50, facingAllIn: false
+};
+assert.equal(preflopHandProfile([card(14, '♠'), card(5, '♠')]).combo, 'A5s');
+assert.equal(preflopHandProfile([card(13, '♠'), card(8, '♥')]).combo, 'K8o');
+assert.equal(decisionFromEquity({ ...preflopContext, hand: [card(7, '♠'), card(2, '♥')] }, 0.22, () => 0).action, 'fold', 'UTG에서 72o를 사용하면 안 됩니다.');
+assert.equal(decisionFromEquity({ ...preflopContext, hand: [card(14, '♠'), card(5, '♠')] }, 0.36, () => 0).action, 'raise', 'UTG의 A5s 혼합 오픈을 지원해야 합니다.');
+assert.equal(decisionFromEquity({ ...preflopContext, position: 'BTN', inPosition: true, hand: [card(13, '♠'), card(8, '♥')] }, 0.42, () => 0).action, 'raise', '버튼에서는 K8o까지 오픈 범위를 넓혀야 합니다.');
+assert.equal(decisionFromEquity({ ...preflopContext, position: 'BB', needed: 0, playerRoundBet: 200, hand: [card(8, '♠'), card(3, '♥')] }, 0.3, () => 0).action, 'call', '레이즈가 없으면 BB는 약한 패도 체크해야 합니다.');
+
+const facingOpenContext = {
+  ...preflopContext, pot: 900, needed: 600, currentBet: 600, position: 'BTN',
+  preflopRaiseCount: 1, hand: [card(11, '♠'), card(4, '♥')]
+};
+assert.equal(decisionFromEquity(facingOpenContext, 0.32, () => 0).action, 'fold', 'J4o로 오픈 레이즈를 방어하면 안 됩니다.');
+assert.equal(decisionFromEquity({ ...facingOpenContext, hand: [card(14, '♠'), card(13, '♥')] }, 0.66, () => 0).action, 'raise', 'AK는 오픈 레이즈에 밸류 3벳해야 합니다.');
+assert.equal(decisionFromEquity({ ...facingOpenContext, preflopRaiseCount: 2, currentBet: 1800, needed: 1800, hand: [card(7, '♠'), card(6, '♠')] }, 0.38, () => 0).action, 'fold', '76s로 3벳을 따라가면 안 됩니다.');
+
+const rangedAllInContext = {
+  ...allInContext, hand: [card(14, '♠'), card(11, '♥')], position: 'BTN',
+  preflopRaiseCount: 1, limperCount: 0, effectiveStackBB: 50
+};
+assert.equal(decisionFromEquity(rangedAllInContext, 0.52, () => 0).action, 'fold', '딥스택 올인을 AJo로 콜하면 안 됩니다.');
+assert.equal(decisionFromEquity({ ...rangedAllInContext, hand: [card(13, '♠'), card(13, '♥')] }, 0.82, () => 0.99).action, 'call', 'KK는 딥스택 올인을 콜해야 합니다.');
+assert.equal(decisionFromEquity({ ...rangedAllInContext, effectiveStackBB: 10, hand: [card(14, '♠'), card(11, '♠')] }, 0.59, () => 0).action, 'call', '10BB 올인은 AJs로 콜할 수 있어야 합니다.');
 
 const checkedToContext = {
   street: 'flop', mode: 'cash', board: [card(14, '♠'), card(8, '♦'), card(2, '♣')],
@@ -135,7 +167,7 @@ const engineDecision = engine.decide({
   hand: [card(14, '♥'), card(14, '♦')],
   board: [card(14, '♠'), card(8, '♦'), card(2, '♣'), card(3, '♥'), card(4, '♠')]
 }, seededRandom(7));
-assert.equal(engineDecision.source, 'equity-gto-v3');
+assert.equal(engineDecision.source, 'equity-gto-v4');
 assert.equal(engine.status().decisions, 1);
 assert.equal(engine.status()[`${engineDecision.action}s`], 1);
 

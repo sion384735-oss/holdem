@@ -258,6 +258,27 @@ function autoFoldExpiredTurn(room, expectedPlayerId, expectedDeadline, now = Dat
   return true;
 }
 
+function preflopPosition(room, player) {
+  if (player.id === room.players[room.dealerIndex]?.id) return 'BTN';
+  if (player.id === room.players[room.sbIndex]?.id) return 'SB';
+  if (player.id === room.players[room.bbIndex]?.id) return 'BB';
+
+  const positionsBeforeButton = [];
+  let index = room.bbIndex;
+  for (let step = 0; step < room.players.length; step += 1) {
+    index = (index + 1) % room.players.length;
+    const candidate = room.players[index];
+    if (candidate.id === room.players[room.dealerIndex]?.id) break;
+    if (candidate.inHand) positionsBeforeButton.push(candidate.id);
+  }
+  const playerIndex = positionsBeforeButton.indexOf(player.id);
+  if (playerIndex < 0 || positionsBeforeButton.length <= 1) return 'CO';
+  if (playerIndex === positionsBeforeButton.length - 1) return 'CO';
+  if (playerIndex === positionsBeforeButton.length - 2) return 'HJ';
+  const middleStartsAt = Math.ceil((positionsBeforeButton.length - 2) / 2);
+  return playerIndex >= middleStartsAt ? 'MP' : 'UTG';
+}
+
 function scheduleBotAction(room) {
   const player = room.players[room.actionIndex];
   if (!player?.isBot || room.phase !== 'playing') return;
@@ -284,6 +305,12 @@ function scheduleBotAction(room) {
     }
     const needed = callAmount(room, player);
     const opponents = contenders(room).filter(other => other.id !== player.id);
+    const playerTotal = player.stack + player.roundBet;
+    const largestOpponentTotal = Math.max(0, ...opponents.map(opponent => opponent.stack + opponent.roundBet));
+    const effectiveStackBB = Math.min(playerTotal, largestOpponentTotal) / Math.max(1, room.handBB);
+    const limperCount = room.street === 'preflop' && room.currentBet <= room.handBB
+      ? opponents.filter(opponent => opponent.acted && opponent.roundBet === room.handBB).length
+      : 0;
     const previousAggressor = room.players.find(other => other.id === room.previousStreetAggressorId);
     const isDonkOpportunity = ['flop', 'turn', 'river'].includes(room.street)
       && room.currentBet === 0
@@ -305,6 +332,10 @@ function scheduleBotAction(room) {
       playerStack: player.stack,
       opponentCount: opponents.length,
       inPosition: player.id === room.players[room.dealerIndex]?.id,
+      position: room.street === 'preflop' ? preflopPosition(room, player) : null,
+      preflopRaiseCount: room.street === 'preflop' ? room.streetAggressionCount : 0,
+      limperCount,
+      effectiveStackBB,
       hasInitiative: room.previousStreetAggressorId === player.id,
       isDonkOpportunity,
       streetAggressionCount: room.streetAggressionCount,

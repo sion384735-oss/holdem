@@ -277,7 +277,7 @@ async function testComRoom() {
   assert.equal(hero.state.game.players.filter(player => player.isBot).length, 2);
   assert.equal(hero.state.room.startingChips, 15000);
   assert.ok(hero.state.room.gto.policyCount >= 1, 'TexasSolver 정책이 서버에 로드되어야 합니다.');
-  assert.equal(hero.state.room.gto.fallbackEngine.version, 'equity-gto-v3');
+  assert.equal(hero.state.room.gto.fallbackEngine.version, 'equity-gto-v4');
 
   hero.send({ type: 'startGame' });
   const playing = await hero.waitFor(message => message.type === 'state' && message.room.settingsLocked && message.game.phase === 'playing');

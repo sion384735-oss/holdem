@@ -537,11 +537,11 @@ function render() {
   const equityDecisions = gto.roomDecisions?.equity || 0;
   const totalBotDecisions = solverDecisions + equityDecisions;
   $('#gto-card').classList.toggle('hidden', room.botCount < 1);
-  $('#gto-status').textContent = gto.policyCount ? `HYBRID GTO · ${gto.policyCount} SOLVER` : 'RANGE GTO ENGINE V3';
+  $('#gto-status').textContent = gto.policyCount ? `HYBRID GTO · ${gto.policyCount} SOLVER` : 'RANGE GTO ENGINE V4';
   $('#gto-hits').textContent = `${formatChips(solverDecisions)} EXACT / ${formatChips(totalBotDecisions)}`;
   $('#gto-detail').textContent = gto.policyCount
-    ? `TexasSolver 정확 매칭 ${formatChips(solverDecisions)}회 · 나머지 ${formatChips(equityDecisions)}회는 공격권·패 등급·드로·블로커 혼합 전략`
-    : `승률·팟 오즈·공격권·패 등급·드로·블로커 기반 혼합 전략 · ${formatChips(equityDecisions)}회 판단`;
+    ? `TexasSolver 정확 매칭 ${formatChips(solverDecisions)}회 · 나머지 ${formatChips(equityDecisions)}회는 포지션별 프리플랍 레인지와 포스트플랍 혼합 전략`
+    : `포지션·오픈·3벳·스택별 프리플랍 레인지와 승률·드로·블로커 혼합 전략 · ${formatChips(equityDecisions)}회 판단`;
   const canEditSettings = isHost && !room.settingsLocked;
   $('#room-settings-form').classList.toggle('hidden', !canEditSettings);
   if (canEditSettings && !$('#room-settings-form').matches(':focus-within')) {
