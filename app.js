@@ -184,8 +184,21 @@ function viewPlayers() {
 }
 function viewIndexFor(id) { return viewPlayers().findIndex(player => player.id === id); }
 function seatPosition(index, total, radiusX = 40, radiusY = 42) {
+  if (total >= 8 && radiusX === 40 && radiusY === 42) {
+    radiusX = 37;
+    radiusY = 40.5;
+  }
   const angle = (90 + index * (360 / Math.max(2, total))) * Math.PI / 180;
   return { left: 50 + radiusX * Math.cos(angle), top: 50 + radiusY * Math.sin(angle) };
+}
+function betPosition(index, total, seat = seatPosition(index, total)) {
+  const angle = (90 + index * (360 / Math.max(2, total))) * Math.PI / 180;
+  const sideSeat = Math.abs(seat.left - 50) > 32 && Math.abs(seat.top - 50) < 20;
+  const bottomCenterSeat = Math.abs(seat.left - 50) < 1 && seat.top > 50;
+  return {
+    left: bottomCenterSeat ? 43 : 50 + 23.5 * Math.cos(angle),
+    top: sideSeat && seat.top > 50 ? 52 : 50 + 23 * Math.sin(angle)
+  };
 }
 function cardHTML(card, back = false, extraClass = '') {
   const className = extraClass ? ` ${extraClass}` : '';
@@ -307,6 +320,8 @@ function renderSeats() {
   const game = snapshot.game;
   const players = viewPlayers();
   const winnerIds = new Set((game.result?.winners || []).map(winner => winner.id));
+  const equityByPlayer = new Map((game.showdownEquities || []).map(equity => [equity.playerId, equity]));
+  const leadingEquity = Math.max(0, ...(game.showdownEquities || []).map(equity => equity.equity));
   const seats = players.map((player, index) => {
     const isHero = player.id === snapshot.you;
     const cards = player.inHand ? (player.hand ? player.hand.map(card => cardHTML(card)).join('') : `${cardHTML(null, true)}${cardHTML(null, true)}`) : '';
@@ -316,20 +331,32 @@ function renderSeats() {
       : '';
     const classes = [player.folded ? 'folded' : '', player.allIn ? 'all-in' : '', !player.connected ? 'disconnected' : '', game.turnPlayerId === player.id ? 'active' : '', position.top < 50 ? 'top-seat' : '', sideCards, winnerIds.has(player.id) ? 'winner' : ''].filter(Boolean).join(' ');
     const blind = game.sbId === player.id ? 'SB' : game.bbId === player.id ? 'BB' : '';
-    const status = !player.connected ? 'DISCONNECTED' : player.stack <= 0 && !player.inHand ? 'TABLE OUT' : `${formatChips(player.stack)} <i>/</i> ${formatBB(player.stack)}`;
+    const status = !player.connected
+      ? 'DISCONNECTED'
+      : player.stack <= 0 && !player.inHand
+        ? 'TABLE OUT'
+        : player.allIn
+          ? '<em class="all-in-status">ALL IN</em>'
+          : `${formatChips(player.stack)} <i>/</i> ${formatBB(player.stack)}`;
     const name = escapeHTML(player.name);
     const handName = isHero && player.handName && !player.folded ? escapeHTML(player.handName) : '';
+    const equity = equityByPlayer.get(player.id);
+    const equityPercent = equity ? equity.equity * 100 : 0;
+    const equityLabel = equityPercent >= 99.95 ? '100' : equityPercent <= 0.05 ? '0' : equityPercent.toFixed(1);
+    const equityBadge = equity
+      ? `<div class="showdown-equity${equity.equity >= leadingEquity - 0.000001 ? ' leader' : ''}" title="${equity.exact ? '정확 계산' : `${formatChips(equity.samples)}회 시뮬레이션`}"><small>승률</small><strong>${equityLabel}%</strong></div>`
+      : '';
     const turnSeconds = Math.max(0, Math.ceil((game.turnEndsAt - Date.now()) / 1000));
     const countdown = game.phase === 'playing' && game.turnPlayerId === player.id ? `<time class="turn-countdown${turnSeconds <= 10 ? ' urgent' : ''}" style="--turn-progress:${Math.min(360, turnSeconds * 6)}deg">${turnSeconds}</time>` : '';
-    return `<div class="seat seat-${index} ${classes}" style="left:${position.left}%;top:${position.top}%"><div class="player-box">${cards ? `<div class="hole-cards${handName ? ' has-hand-name' : ''}">${handName ? `<span class="current-hand-badge">${handName}</span>` : ''}${player.allIn ? '<span class="all-in-badge">ALL IN</span>' : ''}${cards}${countdown}</div>` : ''}<span class="avatar" style="background:${COLORS[index % COLORS.length]};color:${isHero ? '#18251f' : '#fff'}">${initials(name)}</span><div class="player-info"><b>${name}${player.isBot ? '<span class="badge">COM</span>' : isHero ? '<span class="badge">YOU</span>' : ''}</b><small>${status}</small></div>${blind ? `<span class="blind-badge">${blind}</span>` : ''}</div></div>`;
+    return `<div class="seat seat-${index} ${classes}" style="left:${position.left}%;top:${position.top}%"><div class="player-box">${cards ? `<div class="hole-cards${handName ? ' has-hand-name' : ''}">${handName ? `<span class="current-hand-badge">${handName}</span>` : ''}${cards}${countdown}</div>` : ''}<span class="avatar" style="background:${COLORS[index % COLORS.length]};color:${isHero ? '#18251f' : '#fff'}">${initials(name)}</span><div class="player-info"><b>${name}${player.isBot ? '<span class="badge">COM</span>' : isHero ? '<span class="badge">YOU</span>' : ''}</b><small>${status}</small></div>${blind ? `<span class="blind-badge">${blind}</span>` : ''}</div>${equityBadge}</div>`;
   }).join('');
   const bets = players.map((player, index) => {
     if (!player.roundBet) return '';
     const seat = seatPosition(index, players.length);
-    const verticalSeat = Math.abs(seat.left - 50) < 1;
-    const betLeft = 50 + (seat.left - 50) * .64 + (verticalSeat ? (seat.top > 50 ? 12 : -12) : 0);
-    const betTop = 50 + (seat.top - 50) * .64;
-    return `<div class="table-bet" data-tone="${chipTone(player.roundBet, game.bb)}" style="left:${betLeft}%;top:${betTop}%"><span class="chip-stack">${pokerChipHTML()}</span><strong>${formatChips(player.roundBet)} / ${formatCompactBB(player.roundBet)}</strong></div>`;
+    const bet = betPosition(index, players.length, seat);
+    const sideClass = seat.left > 58 ? ' bet-right' : seat.left < 42 ? ' bet-left' : '';
+    const owner = escapeHTML(player.name);
+    return `<div class="table-bet${sideClass}" data-tone="${chipTone(player.roundBet, game.bb)}" data-seat="${index + 1}" style="left:${bet.left}%;top:${bet.top}%" aria-label="${owner} 베팅 ${formatChips(player.roundBet)}"><span class="chip-stack">${pokerChipHTML()}</span><strong class="bet-copy">${formatChips(player.roundBet)} / ${formatCompactBB(player.roundBet)}</strong></div>`;
   }).join('');
   $('#seats').innerHTML = seats + bets;
   const dealerIndex = players.findIndex(player => player.id === game.dealerId);

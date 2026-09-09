@@ -164,10 +164,16 @@ async function testAllInRunout() {
 
   const preflopRunout = await host.waitFor(message => message.type === 'state' && message.game.phase === 'runout' && message.game.board.length === 0);
   assert.equal(preflopRunout.game.players.filter(player => player.inHand).every(player => player.allIn && player.hand?.length === 2), true);
-  await host.waitFor(message => message.type === 'state' && message.game.phase === 'runout' && message.game.street === 'flop' && message.game.board.length === 3);
-  await host.waitFor(message => message.type === 'state' && message.game.phase === 'runout' && message.game.street === 'turn' && message.game.board.length === 4);
-  await host.waitFor(message => message.type === 'state' && message.game.phase === 'runout' && message.game.street === 'river' && message.game.board.length === 5);
+  assert.equal(preflopRunout.game.showdownEquities.length, 2);
+  assert.equal(preflopRunout.game.showdownEquities.every(equity => !equity.exact && equity.samples === 4000), true);
+  const flopEquity = await host.waitFor(message => message.type === 'state' && message.game.phase === 'runout' && message.game.street === 'flop' && message.game.board.length === 3);
+  assert.equal(flopEquity.game.showdownEquities.every(equity => equity.exact && equity.samples === 990), true);
+  const turnEquity = await host.waitFor(message => message.type === 'state' && message.game.phase === 'runout' && message.game.street === 'turn' && message.game.board.length === 4);
+  assert.equal(turnEquity.game.showdownEquities.every(equity => equity.exact && equity.samples === 44), true);
+  const riverEquity = await host.waitFor(message => message.type === 'state' && message.game.phase === 'runout' && message.game.street === 'river' && message.game.board.length === 5);
+  assert.equal(riverEquity.game.showdownEquities.every(equity => equity.exact && equity.samples === 1), true);
   const result = await host.waitFor(message => message.type === 'state' && message.game.phase === 'result' && message.game.street === 'showdown');
+  assert.ok(Math.abs(result.game.showdownEquities.reduce((sum, equity) => sum + equity.equity, 0) - 1) < 0.00001);
   assert.equal(result.game.result.pots[0].label, 'MAIN POT');
   assert.equal(result.game.handHistory.length, 1);
   assert.equal(result.game.handHistory[0].players.every(player => player.revealed && player.hand?.length === 2), true, '쇼다운 참가자의 공개 카드는 히스토리에 남아야 합니다.');
@@ -241,6 +247,7 @@ async function testEffectiveStackCap() {
   const folder = firstHand.game.turnPlayerId === host.id ? host : guest;
   folder.send({ type: 'action', action: 'fold' });
   const foldedResult = await host.waitFor(message => message.type === 'state' && message.game.phase === 'result');
+  assert.deepEqual(foldedResult.game.showdownEquities, [], '폴드 승리에는 쇼다운 승률을 공개하면 안 됩니다.');
   assert.equal(foldedResult.game.handHistory.length, 1);
   assert.equal(foldedResult.game.handHistory[0].players.every(player => !player.revealed && player.hand === null), true, '폴드로 끝난 핸드의 홀카드는 누구 것도 저장하면 안 됩니다.');
   const secondHand = await host.waitFor(message => message.type === 'state' && message.game.phase === 'playing' && message.game.handNumber > firstHand.game.handNumber, 15000);

@@ -9,6 +9,7 @@ const { contestableRaiseTarget, uncalledExcess, buildPotLayers } = require('./po
 const { advanceTournamentClock, tournamentBlindLevel } = require('./tournament-clock');
 const { describeCurrentHand } = require('./hand-strength');
 const { shuffleSeatOrder } = require('./seat-order');
+const { calculateShowdownEquities } = require('./showdown-equity');
 
 const PORT = Number(process.env.PORT || 5050);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -16,6 +17,7 @@ const ROOT = __dirname;
 const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const ACTION_TIMEOUT_MS = Math.max(500, Number(process.env.ACTION_TIMEOUT_MS) || 60000);
+const SHOWDOWN_EQUITY_ITERATIONS = Math.max(1000, Number(process.env.SHOWDOWN_EQUITY_ITERATIONS) || 4000);
 const rooms = new Map();
 const gtoEngine = new GtoPolicyEngine({ policyDir: process.env.GTO_POLICY_DIR || path.join(ROOT, 'gto', 'policies') });
 const equityGtoEngine = new EquityGtoBotEngine({ iterations: Number(process.env.BOT_EQUITY_ITERATIONS) || 420 });
@@ -61,6 +63,7 @@ function createRoom(code, options = {}) {
     sb: 100, bb: 200, handSB: 100, handBB: 200, level: 0, handLevel: 0,
     levelEndsAt: Date.now() + settings.blindUpMinutes * 60000,
     logs: [], result: null, lastHandReview: null, handHistory: [], eventSeq: 0, resultSeq: 0, runoutFrom: null,
+    showdownEquities: [],
     gtoRootPot: 0, gtoRootEffectiveStack: 0, gtoHistory: [],
     streetAggressorId: null, previousStreetAggressorId: null,
     streetAggressionCount: 0, postflopAggressiveStreets: 0,
@@ -84,6 +87,10 @@ function startingStack(room) { return room.startingChips; }
 function inStartPool(player) { return player.connected && player.stack > 0; }
 function canAct(player) { return player.inHand && !player.folded && !player.allIn && !player.allInDeclared && player.stack > 0; }
 function contenders(room) { return room.players.filter(player => player.inHand && !player.folded); }
+function refreshShowdownEquities(room) {
+  room.showdownEquities = calculateShowdownEquities(room.players, room.board, { iterations: SHOWDOWN_EQUITY_ITERATIONS });
+  return room.showdownEquities;
+}
 function nextIndex(room, from, predicate) {
   for (let step = 1; step <= room.players.length; step += 1) {
     const index = (from + step + room.players.length) % room.players.length;
@@ -142,6 +149,7 @@ function serialize(room, viewerId) {
       followingSB: tournamentBlindLevel(room.level + 1)[0],
       followingBB: tournamentBlindLevel(room.level + 1)[1],
       levelEndsAt: room.levelEndsAt, logs: room.logs, result: room.result, runoutFrom: room.runoutFrom,
+      showdownEquities: cardsUp ? room.showdownEquities : [],
       lastHandReview: room.lastHandReview,
       handHistory: room.handHistory
     }
@@ -199,7 +207,7 @@ function startHand(room) {
   if (live.length < 2) return scheduleShuffle(room);
   room.handNumber += 1;
   room.phase = 'playing'; room.phaseEndsAt = 0; room.street = 'preflop'; room.result = null;
-  room.runoutFrom = null;
+  room.runoutFrom = null; room.showdownEquities = [];
   room.pot = 0; room.currentBet = room.bb; room.minRaise = room.bb; room.board = []; room.deck = createDeck();
   room.gtoRootPot = 0; room.gtoRootEffectiveStack = 0; room.gtoHistory = [];
   room.streetAggressorId = null; room.previousStreetAggressorId = null;
@@ -417,6 +425,7 @@ function startAllInRunout(room, refund = null) {
   room.minRaise = room.handBB;
   room.players.forEach(player => { player.roundBet = 0; player.acted = true; });
   addLog(room, `ALL-IN RUNOUT · ${room.street.toUpperCase()}부터 공개`, 'system');
+  refreshShowdownEquities(room);
   broadcast(room);
   if (refund) broadcastEvent(room, { event: 'chipsReturn', playerId: refund.playerId, amount: refund.amount, label: 'UNCALLED RETURN' });
 }
@@ -442,6 +451,7 @@ function advanceAllInRunout(room) {
     return showdown(room);
   }
   room.phaseEndsAt = Date.now() + 1800;
+  refreshShowdownEquities(room);
   broadcast(room);
 }
 
@@ -545,6 +555,7 @@ function archiveHand(room, evaluatedHands = []) {
 
 function finishByFold(room, winner) {
   const refund = settleUncalledExcess(room);
+  room.showdownEquities = [];
   const prize = room.pot;
   winner.stack += prize;
   room.phase = 'result'; room.street = 'fold-win'; room.actionIndex = -1; room.phaseEndsAt = Date.now() + 3800;
@@ -569,6 +580,7 @@ function finishByFold(room, winner) {
 function showdown(room, pendingRefund = null) {
   const refund = pendingRefund || settleUncalledExcess(room);
   room.street = 'showdown'; room.phase = 'result'; room.actionIndex = -1;
+  refreshShowdownEquities(room);
   const live = contenders(room).map(player => ({ player, hand: evaluateSeven([...player.hand, ...room.board]) }));
   const winnings = new Map();
   const resultPots = buildPotLayers(room.players).map(pot => {
@@ -648,7 +660,7 @@ function resetHandState(room, phase = 'lobby') {
   room.deck = []; room.board = []; room.dealerIndex = -1; room.sbIndex = -1; room.bbIndex = -1; room.actionIndex = -1;
   room.street = 'waiting'; room.phase = phase; room.phaseEndsAt = 0; room.turnEndsAt = 0;
   room.pot = 0; room.currentBet = 0; room.minRaise = tournamentBlindLevel(0)[1]; room.result = null;
-  room.runoutFrom = null;
+  room.runoutFrom = null; room.showdownEquities = [];
   room.gtoRootPot = 0; room.gtoRootEffectiveStack = 0; room.gtoHistory = [];
   room.streetAggressorId = null; room.previousStreetAggressorId = null;
   room.streetAggressionCount = 0; room.postflopAggressiveStreets = 0;
